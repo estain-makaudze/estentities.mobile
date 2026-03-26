@@ -7,6 +7,7 @@ import {
   RefreshControl,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -50,6 +51,7 @@ export default function SchedulesScreen() {
   } = useCache();
   const [error, setError] = useState<string | null>(null);
   const [selectedSchedule, setSelectedSchedule] = useState<LoanSchedule | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const configured = useMemo(
     () => !!(settings.baseUrl && settings.db && settings.username && settings.password),
@@ -114,6 +116,17 @@ export default function SchedulesScreen() {
 
   const showEmpty = schedules.items.length === 0 && !refreshingSchedules;
 
+  const filteredSchedules = useMemo(() => {
+    if (!searchQuery.trim()) return schedules.items;
+    const q = searchQuery.trim().toLowerCase();
+    return schedules.items.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        (Array.isArray(s.partner_id) && s.partner_id[1].toLowerCase().includes(q)) ||
+        (Array.isArray(s.invoice_id) && s.invoice_id[1].toLowerCase().includes(q))
+    );
+  }, [schedules.items, searchQuery]);
+
   return (
     <>
       <ScheduleDetailModal
@@ -123,7 +136,7 @@ export default function SchedulesScreen() {
         onUpdated={loadSchedules}
       />
       <FlatList
-      data={schedules.items}
+      data={filteredSchedules}
       keyExtractor={(item) => String(item.id)}
       contentContainerStyle={[
         styles.listContent,
@@ -133,7 +146,7 @@ export default function SchedulesScreen() {
         <RefreshControl refreshing={refreshingSchedules} onRefresh={loadSchedules} />
       }
       ListHeaderComponent={
-        <View style={{ gap: 12, marginBottom: 16 }}>
+        <View style={{ gap: 10, marginBottom: 12 }}>
           <View
             style={[
               styles.banner,
@@ -166,6 +179,32 @@ export default function SchedulesScreen() {
               <Text style={styles.warnText}>Connect online once to download schedules.</Text>
             ) : null}
           </View>
+
+          {/* Search bar */}
+          <View style={styles.searchBox}>
+            <Ionicons name="search-outline" size={16} color="#9CA3AF" />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search by name, customer or invoice…"
+              placeholderTextColor="#9CA3AF"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              returnKeyType="search"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            {searchQuery.length > 0 ? (
+              <TouchableOpacity onPress={() => setSearchQuery("")}>
+                <Ionicons name="close-circle" size={16} color="#9CA3AF" />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
+          {filteredSchedules.length > 0 && searchQuery ? (
+            <Text style={styles.resultCount}>
+              {filteredSchedules.length} of {schedules.items.length} schedules
+            </Text>
+          ) : null}
         </View>
       }
       ListEmptyComponent={
@@ -173,18 +212,20 @@ export default function SchedulesScreen() {
           <Ionicons name="calendar-outline" size={42} color="#9CA3AF" />
           <Text style={styles.emptyTitle}>No schedules found</Text>
           <Text style={styles.emptyText}>
-            {isOnline
+            {searchQuery
+              ? "No schedules match your search."
+              : isOnline
               ? "No payment schedules were returned from Odoo."
               : "No cached schedules available yet."}
           </Text>
-          {isOnline ? (
+          {isOnline && !searchQuery ? (
             <TouchableOpacity style={styles.retryButton} onPress={loadSchedules}>
               <Text style={styles.retryText}>Refresh</Text>
             </TouchableOpacity>
           ) : null}
         </View>
       }
-      ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
+      ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
       renderItem={({ item }) => {
         const currency = settings.defaultCurrency || "UGX";
         const badge = getStatusColor(item.management_status);
@@ -195,14 +236,15 @@ export default function SchedulesScreen() {
             onPress={() => setSelectedSchedule(item)}
             activeOpacity={0.85}
           >
-            <View style={styles.rowBetween}>
+            {/* Row 1: name + status badge + chevron */}
+            <View style={styles.cardRow1}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.scheduleName}>{item.name}</Text>
-                <Text style={styles.invoiceText}>
-                  Invoice: {displayMany2One(item.invoice_id, "Not linked")}
+                <Text style={styles.scheduleName} numberOfLines={1}>{item.name}</Text>
+                <Text style={styles.partnerName} numberOfLines={1}>
+                  {displayMany2One(item.partner_id, "No customer")}
                 </Text>
               </View>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                 <View style={[styles.badge, { backgroundColor: badge.backgroundColor }]}>
                   <Text style={[styles.badgeText, { color: badge.textColor }]}>
                     {humanizeStatus(item.management_status)}
@@ -212,42 +254,26 @@ export default function SchedulesScreen() {
               </View>
             </View>
 
-            <Text style={styles.partnerName}>{displayMany2One(item.partner_id, "No customer")}</Text>
-
-            <View style={styles.metricsRow}>
-              <View style={styles.metricCard}>
-                <Text style={styles.metricLabel}>Invoice Date</Text>
-                <Text style={styles.metricValue}>{formatDateLabel(item.invoice_date)}</Text>
-              </View>
-              <View style={styles.metricCard}>
-                <Text style={styles.metricLabel}>Next Payment</Text>
+            {/* Row 2: compact metrics inline */}
+            <View style={styles.cardRow2}>
+              <View style={styles.metricInline}>
+                <Ionicons name="calendar-outline" size={12} color="#6B7280" />
+                <Text style={styles.metricLabel}>Next</Text>
                 <Text style={styles.metricValue}>{formatDateLabel(item.next_payment_date)}</Text>
               </View>
-            </View>
-
-            <View style={styles.metricsRow}>
-              <View style={styles.metricCard}>
-                <Text style={styles.metricLabel}>Next Single Amount</Text>
-                <Text style={styles.metricValue}>
-                  {formatMoney(item.next_single_amount, currency)}
-                </Text>
-              </View>
-              <View style={styles.metricCard}>
-                <Text style={styles.metricLabel}>Next Expected</Text>
-                <Text style={styles.metricValue}>
-                  {formatMoney(item.next_expected_amount, currency)}
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.metricsRow}>
-              <View style={styles.metricCard}>
-                <Text style={styles.metricLabel}>Due Amount</Text>
+              <View style={styles.metricDivider} />
+              <View style={styles.metricInline}>
+                <Ionicons name="cash-outline" size={12} color="#6B7280" />
+                <Text style={styles.metricLabel}>Due</Text>
                 <Text style={styles.metricValue}>{formatMoney(item.due_amount, currency)}</Text>
               </View>
-              <View style={styles.metricCard}>
-                <Text style={styles.metricLabel}>Missed Count</Text>
-                <Text style={styles.metricValue}>{item.missed_count}</Text>
+              <View style={styles.metricDivider} />
+              <View style={styles.metricInline}>
+                <Ionicons name="alert-outline" size={12} color="#6B7280" />
+                <Text style={styles.metricLabel}>Missed</Text>
+                <Text style={[styles.metricValue, item.missed_count > 0 && { color: "#B91C1C" }]}>
+                  {item.missed_count}
+                </Text>
               </View>
             </View>
           </TouchableOpacity>
@@ -362,62 +388,84 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 14,
-    padding: 16,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     borderWidth: 1,
     borderColor: "#E5E7EB",
-    gap: 12,
+    gap: 8,
   },
-  rowBetween: {
+  cardRow1: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    gap: 12,
+    gap: 8,
   },
   scheduleName: {
-    fontSize: 17,
+    fontSize: 14,
     fontWeight: "700",
     color: "#111827",
   },
-  invoiceText: {
-    marginTop: 4,
+  partnerName: {
     fontSize: 13,
     color: "#6B7280",
+    marginTop: 1,
   },
-  partnerName: {
-    fontSize: 14,
-    color: "#4B5563",
+  cardRow2: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  metricInline: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  metricDivider: {
+    width: 1,
+    height: 14,
+    backgroundColor: "#E5E7EB",
+  },
+  metricLabel: {
+    fontSize: 11,
+    color: "#6B7280",
+  },
+  metricValue: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#111827",
   },
   badge: {
     borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
   },
   badgeText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "700",
   },
-  metricsRow: {
+  // Search
+  searchBox: {
     flexDirection: "row",
-    gap: 10,
-  },
-  metricCard: {
-    flex: 1,
-    backgroundColor: "#F9FAFB",
-    borderRadius: 12,
-    padding: 12,
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#FFFFFF",
     borderWidth: 1,
-    borderColor: "#F3F4F6",
+    borderColor: "#E5E7EB",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
-  metricLabel: {
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: "#111827",
+    padding: 0,
+  },
+  resultCount: {
     fontSize: 12,
     color: "#6B7280",
-    marginBottom: 4,
-  },
-  metricValue: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#111827",
   },
 });
 

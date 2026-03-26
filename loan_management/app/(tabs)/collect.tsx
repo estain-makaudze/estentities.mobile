@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -14,11 +14,16 @@ import {
   View,
 } from "react-native";
 import { authenticate, markScheduleLinePaid } from "../../services/loanApi";
-import { sendPaymentReceivedSms } from "../../services/twilioSms";
+import {
+  buildPaymentSms,
+  fetchFreshSchedule,
+  fetchPartnerPhone,
+  sendSms,
+} from "../../services/twilioSms";
 import { useCache } from "../../store/cacheStore";
 import { LocalCollection, useCollections } from "../../store/collectionStore";
 import { useSettings } from "../../store/settingsStore";
-import { LoanScheduleLine, Many2OneValue } from "../../types/odoo";
+import { LoanScheduleLine, Many2OneValue, OdooSettings } from "../../types/odoo";
 import { formatDateLabel, formatMoney } from "../../utils/format";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -116,6 +121,226 @@ function LinePickerRow({
   );
 }
 
+// ── SMS Preview Modal ─────────────────────────────────────────────────────────
+
+function SmsPreviewModal({
+  visible,
+  item,
+  isRecorded,
+  settings,
+  onClose,
+}: {
+  visible: boolean;
+  item: LocalCollection | null;
+  isRecorded: boolean;
+  settings: OdooSettings;
+  onClose: () => void;
+}) {
+  const [message, setMessage] = useState("");
+  const [phone, setPhone] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [sendResult, setSendResult] = useState<"sent" | "failed" | null>(null);
+  const [failReason, setFailReason] = useState<string | null>(null);
+
+  const initialized = useRef(false);
+
+  // Fetch fresh schedule + partner phone and build default message when modal opens
+  useEffect(() => {
+    if (!visible || !item) return;
+    if (initialized.current) return;
+    initialized.current = true;
+
+    setMessage("");
+    setPhone("");
+    setLoadError(null);
+    setSendResult(null);
+    setFailReason(null);
+
+    if (!settings.smsEnabled || !settings.twilioAccountSid || !settings.twilioAuthToken || !settings.twilioFromNumber) {
+      setLoadError("SMS not configured. Enable Twilio SMS in Settings first.");
+      return;
+    }
+
+    setLoading(true);
+    (async () => {
+      try {
+        const uid = await authenticate(settings);
+        const schedule = await fetchFreshSchedule(settings, uid, item.scheduleId);
+        if (!schedule) {
+          setLoadError("Could not load schedule details.");
+          return;
+        }
+        const partnerId = Array.isArray(schedule.partner_id) ? schedule.partner_id[0] : null;
+        const partnerPhone = partnerId ? await fetchPartnerPhone(settings, uid, partnerId) : null;
+        setPhone(partnerPhone ?? "");
+
+        if (isRecorded) {
+          // Payment confirmation message
+          setMessage(buildPaymentSms(item, schedule));
+        } else {
+          // Payment reminder message for pending collections
+          const ref = item.invoiceName || item.scheduleName;
+          let msg = `Dear ${item.partnerName}, this is a reminder that your payment of ${formatMoney(item.expectedAmount, item.currency)}`;
+          if (ref) msg += ` for ${ref}`;
+          msg += ` was due on ${formatDateLabel(item.linePaymentDate)}.`;
+          if (schedule.due_amount > 0) {
+            msg += ` Total outstanding: ${formatMoney(schedule.due_amount, item.currency)}.`;
+          }
+          msg += ` Please make your payment at your earliest convenience. Thank you!`;
+          setMessage(msg);
+        }
+      } catch (e: unknown) {
+        setLoadError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [visible, item, isRecorded, settings]);
+
+  const handleClose = () => {
+    initialized.current = false;
+    setSendResult(null);
+    setFailReason(null);
+    onClose();
+  };
+
+  const handleSend = async () => {
+    if (!phone.trim()) {
+      Alert.alert("No phone number", "Enter the recipient phone number.");
+      return;
+    }
+    if (!message.trim()) {
+      Alert.alert("Empty message", "The message cannot be empty.");
+      return;
+    }
+    setSending(true);
+    setSendResult(null);
+    setFailReason(null);
+    try {
+      await sendSms(
+        settings.twilioAccountSid,
+        settings.twilioAuthToken,
+        settings.twilioFromNumber,
+        phone.trim(),
+        message.trim()
+      );
+      setSendResult("sent");
+    } catch (e: unknown) {
+      setSendResult("failed");
+      setFailReason(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={handleClose}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <View style={styles.smsModalHeader}>
+          <TouchableOpacity onPress={handleClose} style={styles.smsModalClose}>
+            <Ionicons name="close" size={22} color="#374151" />
+          </TouchableOpacity>
+          <Text style={styles.smsModalTitle}>
+            {isRecorded ? "Payment Confirmation" : "Payment Reminder"}
+          </Text>
+          <View style={{ width: 36 }} />
+        </View>
+
+        <ScrollView
+          style={{ flex: 1, backgroundColor: "#F9FAFB" }}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ padding: 16, paddingBottom: 40, gap: 14 }}
+        >
+          {loading ? (
+            <View style={styles.smsLoading}>
+              <ActivityIndicator size="small" color="#2563EB" />
+              <Text style={styles.smsLoadingText}>Loading contact details…</Text>
+            </View>
+          ) : null}
+
+          {loadError ? (
+            <View style={styles.smsErrorBox}>
+              <Ionicons name="alert-circle-outline" size={16} color="#B91C1C" />
+              <Text style={styles.smsErrorText}>{loadError}</Text>
+            </View>
+          ) : null}
+
+          {sendResult === "sent" ? (
+            <View style={styles.smsSentBox}>
+              <Ionicons name="checkmark-circle" size={20} color="#166534" />
+              <Text style={styles.smsSentText}>Message sent successfully!</Text>
+            </View>
+          ) : null}
+
+          {sendResult === "failed" ? (
+            <View style={styles.smsFailBox}>
+              <Ionicons name="close-circle" size={20} color="#B91C1C" />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.smsFailText}>Failed to send message</Text>
+                {failReason ? <Text style={styles.smsFailReason}>{failReason}</Text> : null}
+              </View>
+            </View>
+          ) : null}
+
+          {!loading && !loadError ? (
+            <>
+              <View>
+                <Text style={styles.smsFieldLabel}>Recipient Phone</Text>
+                <TextInput
+                  style={styles.smsInput}
+                  value={phone}
+                  onChangeText={setPhone}
+                  placeholder="+256700000000"
+                  keyboardType="phone-pad"
+                  autoCapitalize="none"
+                />
+              </View>
+
+              <View>
+                <Text style={styles.smsFieldLabel}>Message (tap to edit)</Text>
+                <TextInput
+                  style={[styles.smsInput, styles.smsInputMulti]}
+                  value={message}
+                  onChangeText={setMessage}
+                  multiline
+                  numberOfLines={6}
+                  textAlignVertical="top"
+                  placeholder="Compose your message…"
+                />
+                <Text style={styles.smsCharCount}>{message.length} characters</Text>
+              </View>
+
+              {sendResult !== "sent" ? (
+                <TouchableOpacity
+                  style={[styles.smsSendButton, sending && { opacity: 0.7 }]}
+                  onPress={handleSend}
+                  disabled={sending}
+                  activeOpacity={0.8}
+                >
+                  {sending ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <Ionicons name="send-outline" size={18} color="#FFFFFF" />
+                      <Text style={styles.smsSendButtonText}>Send Message</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity style={styles.smsDoneButton} onPress={handleClose} activeOpacity={0.8}>
+                  <Text style={styles.smsDoneButtonText}>Done</Text>
+                </TouchableOpacity>
+              )}
+            </>
+          ) : null}
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
 // ── Collection card ───────────────────────────────────────────────────────────
 
 function CollectionCard({
@@ -123,6 +348,7 @@ function CollectionCard({
   currency,
   onRecord,
   onDelete,
+  onSendMessage,
   isRecording,
   recordError,
 }: {
@@ -130,6 +356,7 @@ function CollectionCard({
   currency: string;
   onRecord: () => void;
   onDelete: () => void;
+  onSendMessage: () => void;
   isRecording: boolean;
   recordError: string | null;
 }) {
@@ -179,12 +406,23 @@ function CollectionCard({
 
       {/* Status + actions */}
       {recorded ? (
-        <View style={styles.recordedRow}>
-          <Ionicons name="checkmark-circle" size={16} color="#166534" />
-          <Text style={styles.recordedText}>
-            Recorded to Odoo · {item.recordedAt ? timeLabel(item.recordedAt) : ""}
-          </Text>
-        </View>
+        <>
+          <View style={styles.recordedRow}>
+            <Ionicons name="checkmark-circle" size={16} color="#166534" />
+            <Text style={styles.recordedText}>
+              Recorded to Odoo · {item.recordedAt ? timeLabel(item.recordedAt) : ""}
+            </Text>
+          </View>
+          <View style={styles.recordedActions}>
+            <TouchableOpacity style={styles.sendMsgButton} onPress={onSendMessage} activeOpacity={0.8}>
+              <Ionicons name="chatbubble-ellipses-outline" size={14} color="#0F766E" />
+              <Text style={styles.sendMsgButtonText}>Send Message</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.deleteButton} onPress={onDelete}>
+              <Ionicons name="trash-outline" size={16} color="#EF4444" />
+            </TouchableOpacity>
+          </View>
+        </>
       ) : (
         <View style={styles.actionRow}>
           <View style={styles.notRecordedBadge}>
@@ -192,6 +430,14 @@ function CollectionCard({
             <Text style={styles.notRecordedText}>Not Recorded</Text>
           </View>
           <View style={styles.actionButtons}>
+            <TouchableOpacity
+              style={styles.sendMsgButton}
+              onPress={onSendMessage}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="chatbubble-ellipses-outline" size={14} color="#0F766E" />
+              <Text style={styles.sendMsgButtonText}>Message</Text>
+            </TouchableOpacity>
             <TouchableOpacity
               style={styles.recordButton}
               onPress={onRecord}
@@ -393,6 +639,7 @@ export default function CollectScreen() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [recordingIds, setRecordingIds] = useState<Set<string>>(new Set());
   const [recordErrors, setRecordErrors] = useState<Record<string, string>>({});
+  const [smsItem, setSmsItem] = useState<{ item: LocalCollection; isRecorded: boolean } | null>(null);
 
   const currency = settings.defaultCurrency || "UGX";
 
@@ -431,7 +678,7 @@ export default function CollectScreen() {
     [recorded]
   );
 
-  // Handle Record to Odoo
+  // Handle Record to Odoo (no auto-send SMS anymore)
   const handleRecord = useCallback(
     async (item: LocalCollection) => {
       if (!settings.baseUrl || !settings.db || !settings.username || !settings.password) {
@@ -450,13 +697,6 @@ export default function CollectScreen() {
         const uid = await authenticate(settings);
         await markScheduleLinePaid(settings, uid, item.scheduleLineId);
         await markRecorded(item.id);
-
-        // ── Send payment SMS (fire-and-forget, never blocks the UI) ──────────
-        if (settings.smsEnabled) {
-          sendPaymentReceivedSms(settings, uid, item).catch((smsErr) => {
-            console.warn("[SMS] Notification failed:", smsErr?.message ?? smsErr);
-          });
-        }
 
         // Refresh due lines so the dashboard updates
         refreshAll().catch(() => {});
@@ -580,6 +820,7 @@ export default function CollectScreen() {
                 currency={currency}
                 onRecord={() => handleRecord(item)}
                 onDelete={() => confirmDelete(item)}
+                onSendMessage={() => setSmsItem({ item, isRecorded: false })}
                 isRecording={recordingIds.has(item.id)}
                 recordError={recordErrors[item.id] ?? null}
               />
@@ -604,6 +845,7 @@ export default function CollectScreen() {
                   currency={currency}
                   onRecord={() => {}}
                   onDelete={() => confirmDelete(item)}
+                  onSendMessage={() => setSmsItem({ item, isRecorded: true })}
                   isRecording={false}
                   recordError={null}
                 />
@@ -629,6 +871,15 @@ export default function CollectScreen() {
         schedulePartnerMap={schedulePartnerMap}
         currency={currency}
         loggedLineIds={loggedLineIds}
+      />
+
+      {/* ── SMS Preview Modal ─────────────────────────────────────── */}
+      <SmsPreviewModal
+        visible={!!smsItem}
+        item={smsItem?.item ?? null}
+        isRecorded={smsItem?.isRecorded ?? false}
+        settings={settings}
+        onClose={() => setSmsItem(null)}
       />
     </View>
   );
@@ -1096,6 +1347,174 @@ const styles = StyleSheet.create({
   formInputMulti: {
     minHeight: 80,
     textAlignVertical: "top",
+  },
+
+  // Recorded actions row
+  recordedActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 8,
+    marginTop: 4,
+  },
+
+  // Send message button
+  sendMsgButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "#F0FDFA",
+    borderWidth: 1,
+    borderColor: "#99F6E4",
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 10,
+  },
+  sendMsgButtonText: {
+    color: "#0F766E",
+    fontWeight: "700",
+    fontSize: 13,
+  },
+
+  // ── SMS Preview Modal ─────────────────────────────────────────────
+  smsModalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E5E7EB",
+    backgroundColor: "#FFFFFF",
+  },
+  smsModalClose: {
+    width: 36,
+    height: 36,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  smsModalTitle: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#111827",
+  },
+  smsLoading: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    padding: 16,
+    backgroundColor: "#EFF6FF",
+    borderRadius: 12,
+  },
+  smsLoadingText: {
+    fontSize: 14,
+    color: "#2563EB",
+  },
+  smsErrorBox: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    backgroundColor: "#FEF2F2",
+    borderRadius: 10,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#FECACA",
+  },
+  smsErrorText: {
+    flex: 1,
+    color: "#B91C1C",
+    fontSize: 14,
+  },
+  smsSentBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#F0FDF4",
+    borderRadius: 10,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
+  },
+  smsSentText: {
+    color: "#166534",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  smsFailBox: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    backgroundColor: "#FEF2F2",
+    borderRadius: 10,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#FECACA",
+  },
+  smsFailText: {
+    color: "#B91C1C",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  smsFailReason: {
+    color: "#B91C1C",
+    fontSize: 13,
+    marginTop: 2,
+  },
+  smsFieldLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#374151",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  smsInput: {
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1.5,
+    borderColor: "#D1D5DB",
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: "#111827",
+  },
+  smsInputMulti: {
+    minHeight: 140,
+    textAlignVertical: "top",
+    lineHeight: 22,
+  },
+  smsCharCount: {
+    marginTop: 4,
+    fontSize: 11,
+    color: "#9CA3AF",
+    textAlign: "right",
+  },
+  smsSendButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#0F766E",
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  smsSendButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "800",
+    fontSize: 16,
+  },
+  smsDoneButton: {
+    alignItems: "center",
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: "#F0FDF4",
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
+  },
+  smsDoneButtonText: {
+    color: "#166534",
+    fontWeight: "700",
+    fontSize: 16,
   },
 });
 
