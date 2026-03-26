@@ -1,0 +1,25 @@
+npx expo start
+
+#create demo application with react native demo
+npx create-expo-app@latest
+
+# reset the project to bare minimum and remove unnecessary files
+npm run reset-project
+
+###style with tailwindcss configuration
+
+    # start the project styling
+    npx tailwindcss init
+
+    # get some tailwindcss config from https://www.nativewind.dev/docs/getting-started/installation
+
+    #create global.css under app root folder
+
+    #add babel.config.js file at the root of the project with the following content
+
+    #generate metro.config.js file at the root of the project with the following content
+    npx expo customize metro.config.js
+
+    #add import './global.css'; to the top of the root layout.tsx file
+
+    #create a file called tailwind.d.ts at the root of the project with the following content
