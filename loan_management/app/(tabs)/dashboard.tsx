@@ -10,9 +10,10 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { ScheduleDetailModal } from "../ScheduleDetailModal";
 import { useCache } from "../../store/cacheStore";
 import { useSettings } from "../../store/settingsStore";
-import { LoanScheduleLine, Many2OneValue } from "../../types/odoo";
+import { LoanSchedule, LoanScheduleLine, Many2OneValue } from "../../types/odoo";
 import { formatDateLabel, formatMoney, formatRelativeSyncTime } from "../../utils/format";
 import { scheduleDailyLoanNotification } from "../../utils/notifications";
 
@@ -20,6 +21,16 @@ import { scheduleDailyLoanNotification } from "../../utils/notifications";
 
 function todayLocal(): string {
   const d = new Date();
+  return [
+    d.getFullYear(),
+    String(d.getMonth() + 1).padStart(2, "0"),
+    String(d.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function dateOffsetLocal(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
   return [
     d.getFullYear(),
     String(d.getMonth() + 1).padStart(2, "0"),
@@ -85,10 +96,12 @@ function LineCard({
   line,
   partnerName,
   currency,
+  onPress,
 }: {
   line: LoanScheduleLine;
   partnerName: string;
   currency: string;
+  onPress: () => void;
 }) {
   const badge = stateBadge(line.state);
   const daysOverdue = useMemo(() => {
@@ -99,7 +112,7 @@ function LineCard({
   }, [line.payment_date]);
 
   return (
-    <View style={styles.lineCard}>
+    <TouchableOpacity style={styles.lineCard} onPress={onPress} activeOpacity={0.82}>
       <View style={styles.lineCardHeader}>
         <View style={{ flex: 1 }}>
           <Text style={styles.linePartner} numberOfLines={1}>
@@ -109,7 +122,10 @@ function LineCard({
             {displayM2O(line.invoice_id, "Unknown invoice")}
           </Text>
         </View>
-        <Text style={styles.lineAmount}>{formatMoney(line.expected_amount, currency)}</Text>
+        <View style={{ alignItems: "flex-end" }}>
+          <Text style={styles.lineAmount}>{formatMoney(line.expected_amount, currency)}</Text>
+          <Ionicons name="chevron-forward-outline" size={14} color="#9CA3AF" style={{ marginTop: 4 }} />
+        </View>
       </View>
 
       <View style={styles.lineCardFooter}>
@@ -132,17 +148,17 @@ function LineCard({
           {line.note}
         </Text>
       ) : null}
-    </View>
+    </TouchableOpacity>
   );
 }
 
 // ── Section header ────────────────────────────────────────────────────────────
 
-function SectionHeader({ title, count }: { title: string; count: number }) {
+function SectionHeader({ title, count, color }: { title: string; count: number; color?: string }) {
   return (
     <View style={styles.sectionHeader}>
       <Text style={styles.sectionTitle}>{title}</Text>
-      <View style={styles.sectionBadge}>
+      <View style={[styles.sectionBadge, { backgroundColor: color ?? "#2563EB" }]}>
         <Text style={styles.sectionBadgeText}>{count}</Text>
       </View>
     </View>
@@ -164,6 +180,7 @@ export default function DashboardScreen() {
   } = useCache();
 
   const [error, setError] = useState<string | null>(null);
+  const [selectedSchedule, setSelectedSchedule] = useState<LoanSchedule | null>(null);
 
   const configured = useMemo(
     () => !!(settings.baseUrl && settings.db && settings.username && settings.password),
@@ -172,6 +189,9 @@ export default function DashboardScreen() {
 
   const currency = settings.defaultCurrency || "UGX";
   const today = todayLocal();
+  const yesterday = dateOffsetLocal(1);
+  const twoDaysAgo = dateOffsetLocal(2);
+  const threeDaysAgo = dateOffsetLocal(3);
 
   // Build partner name lookup from cached schedules
   const schedulePartnerMap = useMemo(() => {
@@ -184,26 +204,60 @@ export default function DashboardScreen() {
     return map;
   }, [schedules.items]);
 
+  // Build schedule lookup by id
+  const scheduleById = useMemo(() => {
+    const map: Record<number, LoanSchedule> = {};
+    for (const s of schedules.items) {
+      map[s.id] = s;
+    }
+    return map;
+  }, [schedules.items]);
+
   const getPartner = (scheduleId: Many2OneValue): string => {
     if (!Array.isArray(scheduleId)) return "Unknown customer";
     return schedulePartnerMap[scheduleId[0]] ?? scheduleId[1] ?? "Unknown customer";
   };
 
-  // Split due lines into today vs overdue
+  const handleLinePress = useCallback((line: LoanScheduleLine) => {
+    const schedId = Array.isArray(line.schedule_id) ? line.schedule_id[0] : 0;
+    const schedule = scheduleById[schedId];
+    if (schedule) {
+      setSelectedSchedule(schedule);
+    }
+  }, [scheduleById]);
+
+  // Group due lines by date period
   const todayLines = useMemo(
     () => dueLines.items.filter((l) => l.payment_date === today),
     [dueLines.items, today]
   );
 
-  const overdueLines = useMemo(
-    () => dueLines.items.filter((l) => l.payment_date < today),
-    [dueLines.items, today]
+  const yesterdayLines = useMemo(
+    () => dueLines.items.filter((l) => l.payment_date === yesterday),
+    [dueLines.items, yesterday]
+  );
+
+  // "3 Days Ago" group: between 2-3 days ago (inclusive)
+  const threeDaysAgoLines = useMemo(
+    () => dueLines.items.filter((l) => l.payment_date <= twoDaysAgo && l.payment_date >= threeDaysAgo),
+    [dueLines.items, twoDaysAgo, threeDaysAgo]
+  );
+
+  // "More Due Accounts": older than 3 days
+  const olderLines = useMemo(
+    () => dueLines.items.filter((l) => l.payment_date < threeDaysAgo),
+    [dueLines.items, threeDaysAgo]
   );
 
   // Aggregate amounts
   const todayAmount = useMemo(
     () => todayLines.reduce((s, l) => s + l.expected_amount, 0),
     [todayLines]
+  );
+
+  const overdueLines = useMemo(
+    () => dueLines.items.filter((l) => l.payment_date < today),
+    [dueLines.items, today]
   );
 
   const overdueAmount = useMemo(
@@ -246,7 +300,7 @@ export default function DashboardScreen() {
     }, [configured, dueLines.fetchedAt, handleRefresh, isLoaded, isOnline, refreshingDueLines, settingsLoaded])
   );
 
-  // Schedule daily 5am notification when data changes
+  // Schedule daily 5am notification + immediate when data changes
   useEffect(() => {
     if (dueLines.fetchedAt) {
       scheduleDailyLoanNotification({
@@ -283,141 +337,195 @@ export default function DashboardScreen() {
   }
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: "#F1F5F9" }}
-      contentContainerStyle={styles.container}
-      refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
-    >
-      {/* ── Date header ─────────────────────────────────────────── */}
-      <View style={styles.pageHeader}>
-        <View>
-          <Text style={styles.pageTitle}>Collections</Text>
-          <Text style={styles.pageDate}>{todayLongLabel()}</Text>
-        </View>
-        <TouchableOpacity style={styles.refreshButton} onPress={handleRefresh} disabled={isRefreshing}>
-          <Ionicons
-            name={isRefreshing ? "sync" : "refresh-outline"}
-            size={20}
-            color="#2563EB"
-          />
-        </TouchableOpacity>
-      </View>
+    <>
+      <ScheduleDetailModal
+        visible={!!selectedSchedule}
+        schedule={selectedSchedule}
+        onClose={() => setSelectedSchedule(null)}
+        onUpdated={async () => { try { await refreshAll(); } catch { /* silent */ } }}
+      />
 
-      {/* ── Network banner ─────────────────────────────────────── */}
-      <View style={[styles.networkBanner, isOnline ? styles.bannerOnline : styles.bannerOffline]}>
-        <Ionicons
-          name={isOnline ? "cloud-done-outline" : "cloud-offline-outline"}
-          size={16}
-          color={isOnline ? "#166534" : "#92400E"}
-        />
-        <Text style={[styles.networkText, { color: isOnline ? "#166534" : "#92400E" }]}>
-          {isOnline
-            ? `Online · ${formatRelativeSyncTime(dueLines.fetchedAt)}`
-            : "Offline · Showing cached data"}
-        </Text>
-      </View>
-
-      {/* ── Error banner ───────────────────────────────────────── */}
-      {error ? (
-        <View style={styles.errorBanner}>
-          <Ionicons name="alert-circle-outline" size={16} color="#B91C1C" />
-          <Text style={styles.errorText}>{error}</Text>
-        </View>
-      ) : null}
-
-      {/* ── Stats grid ─────────────────────────────────────────── */}
-      <Text style={styles.gridTitle}>Overview</Text>
-      <View style={styles.statsGrid}>
-        <StatCard
-          icon="today-outline"
-          iconColor="#1D4ED8"
-          bgColor="#EFF6FF"
-          label="Due Today"
-          value={todayLines.length}
-          sub={formatMoney(todayAmount, currency)}
-        />
-        <StatCard
-          icon="alert-circle-outline"
-          iconColor="#B91C1C"
-          bgColor="#FEF2F2"
-          label="Overdue"
-          value={overdueLines.length}
-          sub={formatMoney(overdueAmount, currency)}
-        />
-        <StatCard
-          icon="warning-outline"
-          iconColor="#C2410C"
-          bgColor="#FFF7ED"
-          label="At Risk"
-          value={atRiskCount}
-          sub="loans"
-        />
-        <StatCard
-          icon="time-outline"
-          iconColor="#7C3AED"
-          bgColor="#F5F3FF"
-          label="No Valid Plan"
-          value={noValidPlanCount}
-          sub="loans"
-        />
-        <StatCard
-          icon="phone-portrait-outline"
-          iconColor="#0F766E"
-          bgColor="#F0FDFA"
-          label="Non-Communicating"
-          value={nonCommunicatingCount}
-          sub="loans"
-        />
-        <StatCard
-          icon="albums-outline"
-          iconColor="#6B7280"
-          bgColor="#F9FAFB"
-          label="Total Schedules"
-          value={schedules.items.length}
-          sub="active"
-        />
-      </View>
-
-      {/* ── Today's collections ────────────────────────────────── */}
-      <SectionHeader title="Due Today" count={todayLines.length} />
-
-      {todayLines.length === 0 ? (
-        <View style={styles.emptySection}>
-          <Ionicons name="checkmark-circle-outline" size={36} color="#22C55E" />
-          <Text style={styles.emptySectionText}>No collections due today 🎉</Text>
-        </View>
-      ) : (
-        <View style={styles.lineList}>
-          {todayLines.map((line) => (
-            <LineCard
-              key={line.id}
-              line={line}
-              partnerName={getPartner(line.schedule_id)}
-              currency={currency}
+      <ScrollView
+        style={{ flex: 1, backgroundColor: "#F1F5F9" }}
+        contentContainerStyle={styles.container}
+        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
+      >
+        {/* ── Date header ─────────────────────────────────────────── */}
+        <View style={styles.pageHeader}>
+          <View>
+            <Text style={styles.pageTitle}>Collections</Text>
+            <Text style={styles.pageDate}>{todayLongLabel()}</Text>
+          </View>
+          <TouchableOpacity style={styles.refreshButton} onPress={handleRefresh} disabled={isRefreshing}>
+            <Ionicons
+              name={isRefreshing ? "sync" : "refresh-outline"}
+              size={20}
+              color="#2563EB"
             />
-          ))}
+          </TouchableOpacity>
         </View>
-      )}
 
-      {/* ── Overdue collections ─────────────────────────────────── */}
-      {overdueLines.length > 0 ? (
-        <>
-          <SectionHeader title="Overdue" count={overdueLines.length} />
+        {/* ── Network banner ─────────────────────────────────────── */}
+        <View style={[styles.networkBanner, isOnline ? styles.bannerOnline : styles.bannerOffline]}>
+          <Ionicons
+            name={isOnline ? "cloud-done-outline" : "cloud-offline-outline"}
+            size={16}
+            color={isOnline ? "#166534" : "#92400E"}
+          />
+          <Text style={[styles.networkText, { color: isOnline ? "#166534" : "#92400E" }]}>
+            {isOnline
+              ? `Online · ${formatRelativeSyncTime(dueLines.fetchedAt)}`
+              : "Offline · Showing cached data"}
+          </Text>
+        </View>
+
+        {/* ── Error banner ───────────────────────────────────────── */}
+        {error ? (
+          <View style={styles.errorBanner}>
+            <Ionicons name="alert-circle-outline" size={16} color="#B91C1C" />
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        ) : null}
+
+        {/* ── Stats grid ─────────────────────────────────────────── */}
+        <Text style={styles.gridTitle}>Overview</Text>
+        <View style={styles.statsGrid}>
+          <StatCard
+            icon="today-outline"
+            iconColor="#1D4ED8"
+            bgColor="#EFF6FF"
+            label="Due Today"
+            value={todayLines.length}
+            sub={formatMoney(todayAmount, currency)}
+          />
+          <StatCard
+            icon="alert-circle-outline"
+            iconColor="#B91C1C"
+            bgColor="#FEF2F2"
+            label="Overdue"
+            value={overdueLines.length}
+            sub={formatMoney(overdueAmount, currency)}
+          />
+          <StatCard
+            icon="warning-outline"
+            iconColor="#C2410C"
+            bgColor="#FFF7ED"
+            label="At Risk"
+            value={atRiskCount}
+            sub="loans"
+          />
+          <StatCard
+            icon="time-outline"
+            iconColor="#7C3AED"
+            bgColor="#F5F3FF"
+            label="No Valid Plan"
+            value={noValidPlanCount}
+            sub="loans"
+          />
+          <StatCard
+            icon="phone-portrait-outline"
+            iconColor="#0F766E"
+            bgColor="#F0FDFA"
+            label="Non-Communicating"
+            value={nonCommunicatingCount}
+            sub="loans"
+          />
+          <StatCard
+            icon="albums-outline"
+            iconColor="#6B7280"
+            bgColor="#F9FAFB"
+            label="Total Schedules"
+            value={schedules.items.length}
+            sub="active"
+          />
+        </View>
+
+        {/* ── Tap hint ───────────────────────────────────────────── */}
+        {dueLines.items.length > 0 ? (
+          <View style={styles.tapHint}>
+            <Ionicons name="hand-left-outline" size={13} color="#6B7280" />
+            <Text style={styles.tapHintText}>Tap a card to edit or record a payment</Text>
+          </View>
+        ) : null}
+
+        {/* ── Due Today ──────────────────────────────────────────── */}
+        <SectionHeader title="Due Today" count={todayLines.length} color="#1D4ED8" />
+        {todayLines.length === 0 ? (
+          <View style={styles.emptySection}>
+            <Ionicons name="checkmark-circle-outline" size={36} color="#22C55E" />
+            <Text style={styles.emptySectionText}>No collections due today 🎉</Text>
+          </View>
+        ) : (
           <View style={styles.lineList}>
-            {overdueLines.map((line) => (
+            {todayLines.map((line) => (
               <LineCard
                 key={line.id}
                 line={line}
                 partnerName={getPartner(line.schedule_id)}
                 currency={currency}
+                onPress={() => handleLinePress(line)}
               />
             ))}
           </View>
-        </>
-      ) : null}
+        )}
 
-      <View style={{ height: 32 }} />
-    </ScrollView>
+        {/* ── Yesterday ──────────────────────────────────────────── */}
+        {yesterdayLines.length > 0 ? (
+          <>
+            <SectionHeader title="Yesterday" count={yesterdayLines.length} color="#B45309" />
+            <View style={styles.lineList}>
+              {yesterdayLines.map((line) => (
+                <LineCard
+                  key={line.id}
+                  line={line}
+                  partnerName={getPartner(line.schedule_id)}
+                  currency={currency}
+                  onPress={() => handleLinePress(line)}
+                />
+              ))}
+            </View>
+          </>
+        ) : null}
+
+        {/* ── 3 Days Ago ─────────────────────────────────────────── */}
+        {threeDaysAgoLines.length > 0 ? (
+          <>
+            <SectionHeader title="3 Days Ago" count={threeDaysAgoLines.length} color="#991B1B" />
+            <View style={styles.lineList}>
+              {threeDaysAgoLines.map((line) => (
+                <LineCard
+                  key={line.id}
+                  line={line}
+                  partnerName={getPartner(line.schedule_id)}
+                  currency={currency}
+                  onPress={() => handleLinePress(line)}
+                />
+              ))}
+            </View>
+          </>
+        ) : null}
+
+        {/* ── More Due Accounts (older than 3 days) ──────────────── */}
+        {olderLines.length > 0 ? (
+          <>
+            <SectionHeader title="More Due Accounts" count={olderLines.length} color="#6B7280" />
+            <View style={styles.lineList}>
+              {olderLines.map((line) => (
+                <LineCard
+                  key={line.id}
+                  line={line}
+                  partnerName={getPartner(line.schedule_id)}
+                  currency={currency}
+                  onPress={() => handleLinePress(line)}
+                />
+              ))}
+            </View>
+          </>
+        ) : null}
+
+        <View style={{ height: 32 }} />
+      </ScrollView>
+    </>
   );
 }
 
@@ -556,7 +664,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 8,
-    // inner card padding via parent
   },
   statLabel: {
     fontSize: 12,
@@ -577,6 +684,20 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
+  // Tap hint
+  tapHint: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 4,
+    marginTop: 4,
+  },
+  tapHintText: {
+    fontSize: 12,
+    color: "#6B7280",
+    fontStyle: "italic",
+  },
+
   // Section header
   sectionHeader: {
     flexDirection: "row",
@@ -591,7 +712,6 @@ const styles = StyleSheet.create({
     color: "#111827",
   },
   sectionBadge: {
-    backgroundColor: "#2563EB",
     borderRadius: 99,
     paddingHorizontal: 8,
     paddingVertical: 2,
@@ -696,4 +816,5 @@ const styles = StyleSheet.create({
     color: "#9CA3AF",
   },
 });
+
 

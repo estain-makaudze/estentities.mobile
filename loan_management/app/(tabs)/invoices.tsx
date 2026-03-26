@@ -7,6 +7,7 @@ import {
   RefreshControl,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -66,6 +67,8 @@ export default function InvoicesScreen() {
   const [error, setError] = useState<string | null>(null);
   const [selectedInvoice, setSelectedInvoice] = useState<LoanInvoice | null>(null);
   const [scheduleForModal, setScheduleForModal] = useState<LoanSchedule | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showUnpaidOnly, setShowUnpaidOnly] = useState(true);
 
   const configured = useMemo(
     () => !!(settings.baseUrl && settings.db && settings.username && settings.password),
@@ -114,6 +117,27 @@ export default function InvoicesScreen() {
     [schedules.items]
   );
 
+  // Filter and sort invoices: by create_date desc, unpaid-only by default, and search query
+  const filteredInvoices = useMemo(() => {
+    let list = invoices.items;
+
+    if (showUnpaidOnly) {
+      list = list.filter((inv) => inv.payment_state !== "paid");
+    }
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      list = list.filter(
+        (inv) =>
+          (inv.name && inv.name.toLowerCase().includes(q)) ||
+          (Array.isArray(inv.partner_id) && inv.partner_id[1].toLowerCase().includes(q))
+      );
+    }
+
+    // Already ordered by create_date desc from the API; keep that order
+    return list;
+  }, [invoices.items, showUnpaidOnly, searchQuery]);
+
   if (!settingsLoaded || !isLoaded) {
     return (
       <View style={styles.centered}>
@@ -135,7 +159,7 @@ export default function InvoicesScreen() {
     );
   }
 
-  const showEmpty = invoices.items.length === 0 && !refreshingInvoices;
+  const showEmpty = filteredInvoices.length === 0 && !refreshingInvoices;
 
   return (
     <>
@@ -158,7 +182,7 @@ export default function InvoicesScreen() {
       />
 
       <FlatList
-        data={invoices.items}
+        data={filteredInvoices}
         keyExtractor={(item) => String(item.id)}
         contentContainerStyle={[
           styles.listContent,
@@ -168,7 +192,7 @@ export default function InvoicesScreen() {
           <RefreshControl refreshing={refreshingInvoices} onRefresh={loadInvoices} />
         }
         ListHeaderComponent={
-          <View style={{ gap: 12, marginBottom: 16 }}>
+          <View style={{ gap: 12, marginBottom: 8 }}>
             <View
               style={[
                 styles.banner,
@@ -201,6 +225,49 @@ export default function InvoicesScreen() {
                 <Text style={styles.warnText}>Connect online at least once to download invoices.</Text>
               ) : null}
             </View>
+
+            {/* Search bar */}
+            <View style={styles.searchRow}>
+              <View style={styles.searchBox}>
+                <Ionicons name="search-outline" size={16} color="#9CA3AF" />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Search by invoice # or customer…"
+                  placeholderTextColor="#9CA3AF"
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  returnKeyType="search"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                {searchQuery.length > 0 ? (
+                  <TouchableOpacity onPress={() => setSearchQuery("")}>
+                    <Ionicons name="close-circle" size={16} color="#9CA3AF" />
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+              <TouchableOpacity
+                style={[styles.filterButton, showUnpaidOnly && styles.filterButtonActive]}
+                onPress={() => setShowUnpaidOnly((v) => !v)}
+              >
+                <Ionicons
+                  name="funnel-outline"
+                  size={16}
+                  color={showUnpaidOnly ? "#FFFFFF" : "#2563EB"}
+                />
+                <Text style={[styles.filterButtonText, showUnpaidOnly && styles.filterButtonTextActive]}>
+                  {showUnpaidOnly ? "Unpaid" : "All"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {filteredInvoices.length > 0 ? (
+              <Text style={styles.resultCount}>
+                {filteredInvoices.length} invoice{filteredInvoices.length !== 1 ? "s" : ""}
+                {showUnpaidOnly ? " · unpaid" : ""}
+                {searchQuery ? ` matching "${searchQuery}"` : ""}
+              </Text>
+            ) : null}
           </View>
         }
         ListEmptyComponent={
@@ -471,6 +538,57 @@ const styles = StyleSheet.create({
   badgeText: {
     fontSize: 11,
     fontWeight: "700",
+  },
+  // Search + filter row
+  searchRow: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+  },
+  searchBox: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: "#111827",
+    padding: 0,
+  },
+  filterButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#2563EB",
+    backgroundColor: "#FFFFFF",
+  },
+  filterButtonActive: {
+    backgroundColor: "#2563EB",
+  },
+  filterButtonText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#2563EB",
+  },
+  filterButtonTextActive: {
+    color: "#FFFFFF",
+  },
+  resultCount: {
+    fontSize: 12,
+    color: "#6B7280",
+    marginBottom: 4,
   },
 });
 

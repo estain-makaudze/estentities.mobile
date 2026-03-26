@@ -82,10 +82,26 @@ export async function scheduleDailyLoanNotification(opts: {
       ? "📋 1 Loan Collection Needs Attention"
       : `📋 ${total} Loan Collections Need Attention`;
 
+  const body = parts.join(" · ");
+
+  // Fire an immediate notification so the user sees it right away when data is refreshed
+  if (dueCount > 0) {
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title,
+        body,
+        sound: "default",
+        ...(Platform.OS === "android" ? { channelId: CHANNEL_ID } : {}),
+      },
+      trigger: null,
+    });
+  }
+
+  // Also schedule the daily 5am reminder
   await Notifications.scheduleNotificationAsync({
     content: {
       title,
-      body: parts.join(" · "),
+      body,
       sound: "default",
       ...(Platform.OS === "android" ? { channelId: CHANNEL_ID } : {}),
     },

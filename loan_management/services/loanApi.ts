@@ -34,6 +34,7 @@ export async function fetchLoanInvoices(
       "id",
       "name",
       "partner_id",
+      "create_date",
       "invoice_date",
       "invoice_date_due",
       "amount_total",
@@ -47,7 +48,7 @@ export async function fetchLoanInvoices(
       "loan_next_single_amount",
       "loan_next_payment_date",
     ],
-    order: "invoice_date desc, id desc",
+    order: "create_date desc, id desc",
     limit: 200,
   });
 }

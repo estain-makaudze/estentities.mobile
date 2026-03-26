@@ -42,9 +42,9 @@ export async function sendSms(
   }
 }
 
-// ── Odoo data helpers (internal) ──────────────────────────────────────────────
+// ── Odoo data helpers ─────────────────────────────────────────────────────────
 
-async function fetchPartnerPhone(
+export async function fetchPartnerPhone(
   settings: OdooSettings,
   uid: number,
   partnerId: number
@@ -61,7 +61,7 @@ async function fetchPartnerPhone(
   return (records[0].mobile || records[0].phone) || null;
 }
 
-async function fetchFreshSchedule(
+export async function fetchFreshSchedule(
   settings: OdooSettings,
   uid: number,
   scheduleId: number
@@ -86,7 +86,7 @@ async function fetchFreshSchedule(
 
 // ── SMS message builder ───────────────────────────────────────────────────────
 
-function buildPaymentSms(item: LocalCollection, schedule: LoanSchedule): string {
+export function buildPaymentSms(item: LocalCollection, schedule: LoanSchedule): string {
   const paid = formatMoney(item.collectedAmount, item.currency);
   const ref  = item.invoiceName || item.scheduleName;
 

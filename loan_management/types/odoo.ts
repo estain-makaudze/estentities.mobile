@@ -22,6 +22,7 @@ export interface LoanInvoice {
   id: number;
   name: string;
   partner_id: Many2OneValue;
+  create_date: string | false;
   invoice_date: string | false;
   invoice_date_due: string | false;
   amount_total: number;
