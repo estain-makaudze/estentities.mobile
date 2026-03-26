@@ -13,6 +13,11 @@ import {
 import { useRouter } from "expo-router";
 import { useApp } from "../context/AppContext";
 import { SplitEntry } from "../types";
+import {
+  SplitMode,
+  determineSplitMode,
+  extractCustomPercentages,
+} from "../utils/splits";
 
 const CATEGORIES = [
   "Groceries",
@@ -25,10 +30,8 @@ const CATEGORIES = [
   "Other",
 ];
 
-type SplitMode = "none" | "equal" | "custom";
-
 export default function AddExpenseScreen() {
-  const { state, addExpense } = useApp();
+  const { state, addExpense, getCategoryConfig } = useApp();
   const router = useRouter();
   const { users } = state;
 
@@ -42,12 +45,14 @@ export default function AddExpenseScreen() {
   // Custom split percentages keyed by userId
   const [customPercentages, setCustomPercentages] = useState<
     Record<string, string>
-  >(() => {
-    const initial: Record<string, string> = {};
-    const defaultPct = users.length > 0 ? (100 / users.length).toFixed(1) : "0";
-    for (const u of users) initial[u.id] = defaultPct;
-    return initial;
-  });
+  >(() => extractCustomPercentages(undefined, users));
+
+  // Apply category default when category changes
+  React.useEffect(() => {
+    const config = getCategoryConfig(category);
+    setCustomPercentages(extractCustomPercentages(config, users));
+    setSplitMode(determineSplitMode(config, users));
+  }, [category, users, getCategoryConfig]);
 
   const handleSubmit = () => {
     const parsedAmount = parseFloat(amount);

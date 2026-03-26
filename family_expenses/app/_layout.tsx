@@ -50,6 +50,15 @@ export default function RootLayout() {
             ),
           }}
         />
+        <Tabs.Screen
+          name="settings"
+          options={{
+            title: "Settings",
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="settings" size={size} color={color} />
+            ),
+          }}
+        />
         {/* Hidden modal screens */}
         <Tabs.Screen name="add-expense" options={{ href: null }} />
         <Tabs.Screen name="add-settlement" options={{ href: null }} />

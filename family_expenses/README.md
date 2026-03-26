@@ -1,6 +1,35 @@
-# Welcome to your Expo app 👋
+# Family Expenses App 👨‍👩‍👧‍👦
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A React Native app built with Expo for tracking shared expenses between family members or roommates, with flexible split configurations and automatic balance calculations.
+
+## Features
+
+### 1. **Per-User Expense Tracking**
+- Each expense entry is associated with the user who paid for it
+- All users can view all expenses
+- Track expenses across different categories (Groceries, Utilities, Rent, etc.)
+
+### 2. **Flexible Split Ratios**
+- **No Split**: One person owns the full expense (doesn't affect shared balance)
+- **Equal Split**: Expenses are divided equally among all users
+- **Custom Split**: Configure any percentage split (e.g., 70/30, 40/40/20)
+- Splits can be configured per expense or set as category defaults
+
+### 3. **Category-Based Default Splits** ⭐ NEW
+- Configure default split behavior for each expense category
+- When adding an expense, the split is automatically populated based on the category's configuration
+- Customize defaults in the Settings screen
+- Override defaults on individual expenses as needed
+
+### 4. **Automatic Balance Calculation**
+- Automatically calculates who owes whom and how much
+- Minimizes the number of transactions needed to settle up
+- Real-time balance updates as expenses and settlements are added
+
+### 5. **Partial Payments / Settlements**
+- Record payments from one user to another
+- Payments reduce the outstanding balance accordingly
+- Track settlement history
 
 ## Get started
 
@@ -25,15 +54,41 @@ In the output, you'll find options to open the app in a
 
 You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
 
-## Get a fresh project
+## App Structure
 
-When you're ready, run:
+### Screens
+- **Dashboard** (`index.tsx`): Overview of total expenses and who owes whom
+- **Expenses** (`expenses.tsx`): List of all recorded expenses
+- **Settlements** (`settlements.tsx`): History of payments made
+- **Users** (`users.tsx`): Manage users who share expenses
+- **Settings** (`settings.tsx`): Configure default splits per category
+- **Add Expense** (`add-expense.tsx`): Record a new expense with flexible split options
+- **Add Settlement** (`add-settlement.tsx`): Record a payment between users
 
-```bash
-npm run reset-project
-```
+### Key Files
+- `types/index.ts`: TypeScript interfaces for User, Expense, Settlement, CategoryConfig
+- `context/AppContext.tsx`: Global state management with React Context
+- `utils/storage.ts`: AsyncStorage persistence layer
+- `utils/balance.ts`: Balance calculation algorithms
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## Usage Examples
+
+### Example 1: Two Roommates Splitting 50/50
+- Add two users (e.g., "John" and "Sarah")
+- Set all categories to "Equal Split" in Settings
+- Add expenses as they occur
+- Dashboard shows who owes whom
+
+### Example 2: Custom Split Ratios
+- Configure "Rent" category as 70/30 (one person has a larger room)
+- Configure "Groceries" as 50/50
+- Configure "Utilities" as equal split
+- Each category automatically applies its default when adding expenses
+
+### Example 3: Mixed Personal and Shared Expenses
+- Set some categories to "No Split" (personal items)
+- Set others to equal or custom splits
+- Track everything in one place while keeping balances accurate
 
 ## Learn more
 

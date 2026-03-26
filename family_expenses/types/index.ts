@@ -38,3 +38,10 @@ export interface DebtSummary {
   toUserId: string;
   amount: number;
 }
+
+/** Configuration for default split per category */
+export interface CategoryConfig {
+  category: string;
+  /** null = no default split (payer owns 100%). Otherwise default percentage per user. */
+  defaultSplits: SplitEntry[] | null;
+}
