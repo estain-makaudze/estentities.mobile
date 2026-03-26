@@ -126,11 +126,13 @@ function LinePickerRow({
 function SmsPreviewModal({
   visible,
   item,
+  isRecorded,
   settings,
   onClose,
 }: {
   visible: boolean;
   item: LocalCollection | null;
+  isRecorded: boolean;
   settings: OdooSettings;
   onClose: () => void;
 }) {
@@ -173,14 +175,29 @@ function SmsPreviewModal({
         const partnerId = Array.isArray(schedule.partner_id) ? schedule.partner_id[0] : null;
         const partnerPhone = partnerId ? await fetchPartnerPhone(settings, uid, partnerId) : null;
         setPhone(partnerPhone ?? "");
-        setMessage(buildPaymentSms(item, schedule));
+
+        if (isRecorded) {
+          // Payment confirmation message
+          setMessage(buildPaymentSms(item, schedule));
+        } else {
+          // Payment reminder message for pending collections
+          const ref = item.invoiceName || item.scheduleName;
+          let msg = `Dear ${item.partnerName}, this is a reminder that your payment of ${formatMoney(item.expectedAmount, item.currency)}`;
+          if (ref) msg += ` for ${ref}`;
+          msg += ` was due on ${formatDateLabel(item.linePaymentDate)}.`;
+          if (schedule.due_amount > 0) {
+            msg += ` Total outstanding: ${formatMoney(schedule.due_amount, item.currency)}.`;
+          }
+          msg += ` Please make your payment at your earliest convenience. Thank you!`;
+          setMessage(msg);
+        }
       } catch (e: unknown) {
         setLoadError(e instanceof Error ? e.message : String(e));
       } finally {
         setLoading(false);
       }
     })();
-  }, [visible, item, settings]);
+  }, [visible, item, isRecorded, settings]);
 
   const handleClose = () => {
     initialized.current = false;
@@ -225,7 +242,9 @@ function SmsPreviewModal({
           <TouchableOpacity onPress={handleClose} style={styles.smsModalClose}>
             <Ionicons name="close" size={22} color="#374151" />
           </TouchableOpacity>
-          <Text style={styles.smsModalTitle}>Send Payment Message</Text>
+          <Text style={styles.smsModalTitle}>
+            {isRecorded ? "Payment Confirmation" : "Payment Reminder"}
+          </Text>
           <View style={{ width: 36 }} />
         </View>
 
@@ -620,7 +639,7 @@ export default function CollectScreen() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [recordingIds, setRecordingIds] = useState<Set<string>>(new Set());
   const [recordErrors, setRecordErrors] = useState<Record<string, string>>({});
-  const [smsItem, setSmsItem] = useState<LocalCollection | null>(null);
+  const [smsItem, setSmsItem] = useState<{ item: LocalCollection; isRecorded: boolean } | null>(null);
 
   const currency = settings.defaultCurrency || "UGX";
 
@@ -801,7 +820,7 @@ export default function CollectScreen() {
                 currency={currency}
                 onRecord={() => handleRecord(item)}
                 onDelete={() => confirmDelete(item)}
-                onSendMessage={() => setSmsItem(item)}
+                onSendMessage={() => setSmsItem({ item, isRecorded: false })}
                 isRecording={recordingIds.has(item.id)}
                 recordError={recordErrors[item.id] ?? null}
               />
@@ -826,7 +845,7 @@ export default function CollectScreen() {
                   currency={currency}
                   onRecord={() => {}}
                   onDelete={() => confirmDelete(item)}
-                  onSendMessage={() => setSmsItem(item)}
+                  onSendMessage={() => setSmsItem({ item, isRecorded: true })}
                   isRecording={false}
                   recordError={null}
                 />
@@ -857,7 +876,8 @@ export default function CollectScreen() {
       {/* ── SMS Preview Modal ─────────────────────────────────────── */}
       <SmsPreviewModal
         visible={!!smsItem}
-        item={smsItem}
+        item={smsItem?.item ?? null}
+        isRecorded={smsItem?.isRecorded ?? false}
         settings={settings}
         onClose={() => setSmsItem(null)}
       />

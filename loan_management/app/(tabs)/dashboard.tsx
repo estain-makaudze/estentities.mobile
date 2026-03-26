@@ -238,7 +238,7 @@ export default function DashboardScreen() {
   );
 
   // "3 Days Ago" group: between 2-3 days ago (inclusive)
-  const threeDaysAgoLines = useMemo(
+  const twoToThreeDaysAgoLines = useMemo(
     () => dueLines.items.filter((l) => l.payment_date <= twoDaysAgo && l.payment_date >= threeDaysAgo),
     [dueLines.items, twoDaysAgo, threeDaysAgo]
   );
@@ -488,11 +488,11 @@ export default function DashboardScreen() {
         ) : null}
 
         {/* ── 3 Days Ago ─────────────────────────────────────────── */}
-        {threeDaysAgoLines.length > 0 ? (
+        {twoToThreeDaysAgoLines.length > 0 ? (
           <>
-            <SectionHeader title="3 Days Ago" count={threeDaysAgoLines.length} color="#991B1B" />
+            <SectionHeader title="2–3 Days Ago" count={twoToThreeDaysAgoLines.length} color="#991B1B" />
             <View style={styles.lineList}>
-              {threeDaysAgoLines.map((line) => (
+              {twoToThreeDaysAgoLines.map((line) => (
                 <LineCard
                   key={line.id}
                   line={line}
