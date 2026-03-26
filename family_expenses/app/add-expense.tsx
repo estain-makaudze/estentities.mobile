@@ -13,6 +13,11 @@ import {
 import { useRouter } from "expo-router";
 import { useApp } from "../context/AppContext";
 import { SplitEntry } from "../types";
+import {
+  SplitMode,
+  determineSplitMode,
+  extractCustomPercentages,
+} from "../utils/splits";
 
 const CATEGORIES = [
   "Groceries",
@@ -24,8 +29,6 @@ const CATEGORIES = [
   "Entertainment",
   "Other",
 ];
-
-type SplitMode = "none" | "equal" | "custom";
 
 export default function AddExpenseScreen() {
   const { state, addExpense, getCategoryConfig } = useApp();
@@ -42,30 +45,13 @@ export default function AddExpenseScreen() {
   // Custom split percentages keyed by userId
   const [customPercentages, setCustomPercentages] = useState<
     Record<string, string>
-  >(() => {
-    const initial: Record<string, string> = {};
-    const defaultPct = users.length > 0 ? (100 / users.length).toFixed(1) : "0";
-    for (const u of users) initial[u.id] = defaultPct;
-    return initial;
-  });
+  >(() => extractCustomPercentages(undefined, users));
 
   // Apply category default when category changes
   React.useEffect(() => {
     const config = getCategoryConfig(category);
-    if (config?.defaultSplits) {
-      const result: Record<string, string> = {};
-      for (const split of config.defaultSplits) {
-        result[split.userId] = split.percentage.toString();
-      }
-      setCustomPercentages(result);
-      // Determine if it's equal or custom
-      const allEqual = config.defaultSplits.every(
-        (s) => Math.abs(s.percentage - config.defaultSplits![0].percentage) < 0.1
-      );
-      setSplitMode(allEqual && config.defaultSplits.length === users.length ? "equal" : "custom");
-    } else {
-      setSplitMode("none");
-    }
+    setCustomPercentages(extractCustomPercentages(config, users));
+    setSplitMode(determineSplitMode(config, users));
   }, [category, users, getCategoryConfig]);
 
   const handleSubmit = () => {

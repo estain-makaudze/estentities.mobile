@@ -10,6 +10,11 @@ import {
 } from "react-native";
 import { useApp } from "../context/AppContext";
 import { SplitEntry } from "../types";
+import {
+  SplitMode,
+  determineSplitMode,
+  extractCustomPercentages,
+} from "../utils/splits";
 
 const CATEGORIES = [
   "Groceries",
@@ -22,8 +27,6 @@ const CATEGORIES = [
   "Other",
 ];
 
-type SplitMode = "none" | "equal" | "custom";
-
 export default function SettingsScreen() {
   const { state, getCategoryConfig, updateCategoryConfig } = useApp();
   const { users } = state;
@@ -32,43 +35,19 @@ export default function SettingsScreen() {
   // Get the config for the selected category
   const config = getCategoryConfig(selectedCategory);
   const [splitMode, setSplitMode] = useState<SplitMode>(
-    !config?.defaultSplits ? "none" : config.defaultSplits.length === users.length ? "equal" : "custom"
+    determineSplitMode(config, users)
   );
 
   // Custom split percentages keyed by userId
   const [customPercentages, setCustomPercentages] = useState<
     Record<string, string>
-  >(() => {
-    if (config?.defaultSplits) {
-      const result: Record<string, string> = {};
-      for (const split of config.defaultSplits) {
-        result[split.userId] = split.percentage.toString();
-      }
-      return result;
-    }
-    const initial: Record<string, string> = {};
-    const defaultPct = users.length > 0 ? (100 / users.length).toFixed(1) : "0";
-    for (const u of users) initial[u.id] = defaultPct;
-    return initial;
-  });
+  >(() => extractCustomPercentages(config, users));
 
   // Update custom percentages when category changes
   React.useEffect(() => {
     const config = getCategoryConfig(selectedCategory);
-    if (config?.defaultSplits) {
-      const result: Record<string, string> = {};
-      for (const split of config.defaultSplits) {
-        result[split.userId] = split.percentage.toString();
-      }
-      setCustomPercentages(result);
-      setSplitMode(config.defaultSplits.length === users.length ? "equal" : "custom");
-    } else {
-      const initial: Record<string, string> = {};
-      const defaultPct = users.length > 0 ? (100 / users.length).toFixed(1) : "0";
-      for (const u of users) initial[u.id] = defaultPct;
-      setCustomPercentages(initial);
-      setSplitMode("none");
-    }
+    setCustomPercentages(extractCustomPercentages(config, users));
+    setSplitMode(determineSplitMode(config, users));
   }, [selectedCategory, users, getCategoryConfig]);
 
   const handleSave = () => {
@@ -294,7 +273,11 @@ const styles = StyleSheet.create({
     textAlign: "right",
     backgroundColor: "#F2F2F7",
   },
-  percentSymbol: { fontSize: 15, color: "#6C6C70", marginLeft: 4 },
+  percentSymbol: { 
+    fontSize: 15, 
+    color: "#6C6C70", 
+    marginLeft: 4 
+  },
 
   infoBox: { backgroundColor: "#EAF4FF", borderRadius: 10, padding: 12, marginTop: 8 },
   infoText: { fontSize: 13, color: "#4A90D9", lineHeight: 18 },
