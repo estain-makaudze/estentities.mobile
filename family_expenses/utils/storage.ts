@@ -1,10 +1,11 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { User, Expense, Settlement } from "../types";
+import { User, Expense, Settlement, CategoryConfig } from "../types";
 
 const KEYS = {
   users: "@family_expenses:users",
   expenses: "@family_expenses:expenses",
   settlements: "@family_expenses:settlements",
+  categoryConfigs: "@family_expenses:categoryConfigs",
 } as const;
 
 export async function loadUsers(): Promise<User[]> {
@@ -44,4 +45,17 @@ export async function loadSettlements(): Promise<Settlement[]> {
 
 export async function saveSettlements(settlements: Settlement[]): Promise<void> {
   await AsyncStorage.setItem(KEYS.settlements, JSON.stringify(settlements));
+}
+
+export async function loadCategoryConfigs(): Promise<CategoryConfig[]> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.categoryConfigs);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveCategoryConfigs(configs: CategoryConfig[]): Promise<void> {
+  await AsyncStorage.setItem(KEYS.categoryConfigs, JSON.stringify(configs));
 }

@@ -28,7 +28,7 @@ const CATEGORIES = [
 type SplitMode = "none" | "equal" | "custom";
 
 export default function AddExpenseScreen() {
-  const { state, addExpense } = useApp();
+  const { state, addExpense, getCategoryConfig } = useApp();
   const router = useRouter();
   const { users } = state;
 
@@ -48,6 +48,25 @@ export default function AddExpenseScreen() {
     for (const u of users) initial[u.id] = defaultPct;
     return initial;
   });
+
+  // Apply category default when category changes
+  React.useEffect(() => {
+    const config = getCategoryConfig(category);
+    if (config?.defaultSplits) {
+      const result: Record<string, string> = {};
+      for (const split of config.defaultSplits) {
+        result[split.userId] = split.percentage.toString();
+      }
+      setCustomPercentages(result);
+      // Determine if it's equal or custom
+      const allEqual = config.defaultSplits.every(
+        (s) => Math.abs(s.percentage - config.defaultSplits![0].percentage) < 0.1
+      );
+      setSplitMode(allEqual && config.defaultSplits.length === users.length ? "equal" : "custom");
+    } else {
+      setSplitMode("none");
+    }
+  }, [category, users, getCategoryConfig]);
 
   const handleSubmit = () => {
     const parsedAmount = parseFloat(amount);

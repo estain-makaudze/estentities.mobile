@@ -5,7 +5,7 @@ import React, {
   useEffect,
   useReducer,
 } from "react";
-import { User, Expense, Settlement } from "../types";
+import { User, Expense, Settlement, CategoryConfig } from "../types";
 import {
   loadUsers,
   saveUsers,
@@ -13,6 +13,8 @@ import {
   saveExpenses,
   loadSettlements,
   saveSettlements,
+  loadCategoryConfigs,
+  saveCategoryConfigs,
 } from "../utils/storage";
 import { USER_COLORS } from "../constants/colors";
 
@@ -24,6 +26,7 @@ interface AppState {
   users: User[];
   expenses: Expense[];
   settlements: Settlement[];
+  categoryConfigs: CategoryConfig[];
   loaded: boolean;
 }
 
@@ -31,6 +34,7 @@ const initialState: AppState = {
   users: [],
   expenses: [],
   settlements: [],
+  categoryConfigs: [],
   loaded: false,
 };
 
@@ -39,7 +43,7 @@ const initialState: AppState = {
 // ---------------------------------------------------------------------------
 
 type Action =
-  | { type: "LOAD"; payload: { users: User[]; expenses: Expense[]; settlements: Settlement[] } }
+  | { type: "LOAD"; payload: { users: User[]; expenses: Expense[]; settlements: Settlement[]; categoryConfigs: CategoryConfig[] } }
   | { type: "ADD_USER"; payload: User }
   | { type: "UPDATE_USER"; payload: User }
   | { type: "DELETE_USER"; payload: string }
@@ -47,7 +51,8 @@ type Action =
   | { type: "UPDATE_EXPENSE"; payload: Expense }
   | { type: "DELETE_EXPENSE"; payload: string }
   | { type: "ADD_SETTLEMENT"; payload: Settlement }
-  | { type: "DELETE_SETTLEMENT"; payload: string };
+  | { type: "DELETE_SETTLEMENT"; payload: string }
+  | { type: "UPDATE_CATEGORY_CONFIG"; payload: CategoryConfig };
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -95,6 +100,24 @@ function reducer(state: AppState, action: Action): AppState {
         settlements: state.settlements.filter((s) => s.id !== action.payload),
       };
 
+    case "UPDATE_CATEGORY_CONFIG":
+      const existing = state.categoryConfigs.find(
+        (c) => c.category === action.payload.category
+      );
+      if (existing) {
+        return {
+          ...state,
+          categoryConfigs: state.categoryConfigs.map((c) =>
+            c.category === action.payload.category ? action.payload : c
+          ),
+        };
+      } else {
+        return {
+          ...state,
+          categoryConfigs: [...state.categoryConfigs, action.payload],
+        };
+      }
+
     default:
       return state;
   }
@@ -114,6 +137,8 @@ interface AppContextValue {
   deleteExpense: (id: string) => void;
   addSettlement: (settlement: Omit<Settlement, "id">) => void;
   deleteSettlement: (id: string) => void;
+  updateCategoryConfig: (config: CategoryConfig) => void;
+  getCategoryConfig: (category: string) => CategoryConfig | undefined;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -133,12 +158,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Load persisted data on mount.
   useEffect(() => {
     (async () => {
-      const [users, expenses, settlements] = await Promise.all([
+      const [users, expenses, settlements, categoryConfigs] = await Promise.all([
         loadUsers(),
         loadExpenses(),
         loadSettlements(),
+        loadCategoryConfigs(),
       ]);
-      dispatch({ type: "LOAD", payload: { users, expenses, settlements } });
+      dispatch({ type: "LOAD", payload: { users, expenses, settlements, categoryConfigs } });
     })();
   }, []);
 
@@ -148,7 +174,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     saveUsers(state.users);
     saveExpenses(state.expenses);
     saveSettlements(state.settlements);
-  }, [state.users, state.expenses, state.settlements, state.loaded]);
+    saveCategoryConfigs(state.categoryConfigs);
+  }, [state.users, state.expenses, state.settlements, state.categoryConfigs, state.loaded]);
 
   const addUser = useCallback((user: Omit<User, "id">) => {
     const nextColor =
@@ -187,6 +214,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     dispatch({ type: "DELETE_SETTLEMENT", payload: id });
   }, []);
 
+  const updateCategoryConfig = useCallback((config: CategoryConfig) => {
+    dispatch({ type: "UPDATE_CATEGORY_CONFIG", payload: config });
+  }, []);
+
+  const getCategoryConfig = useCallback((category: string) => {
+    return state.categoryConfigs.find((c) => c.category === category);
+  }, [state.categoryConfigs]);
+
   return (
     <AppContext.Provider
       value={{
@@ -199,6 +234,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         deleteExpense,
         addSettlement,
         deleteSettlement,
+        updateCategoryConfig,
+        getCategoryConfig,
       }}
     >
       {children}
