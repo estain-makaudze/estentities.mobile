@@ -18,6 +18,7 @@ import {
   View,
 } from "react-native";
 import { authenticate, getCategories, getCurrencies } from "../../services/odooApi";
+import { useCategories } from "../../store/categoriesStore";
 import { useQueue } from "../../store/queueStore";
 import { useSettings } from "../../store/settingsStore";
 import { OdooCategory, OdooCurrency } from "../../types/odoo";
@@ -32,6 +33,7 @@ function formatDate(d: Date): string {
 export default function EntryScreen() {
   const { settings, isLoaded } = useSettings();
   const { enqueue, isOnline, isSyncing, queue } = useQueue();
+  const { categories: localCategories } = useCategories();
 
   const [date, setDate] = useState<Date>(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -80,6 +82,22 @@ export default function EntryScreen() {
   }, [isConfigured, isLoaded, isOnline, settings, selectedCategoryId]);
 
   useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
+
+  useEffect(() => {
+    if (categories.length === 0 && localCategories.length > 0) {
+      const converted: OdooCategory[] = localCategories.map((c, i) => ({
+        id: -(i + 1),
+        name: c.name,
+        entry_type: c.entry_type,
+        color: 0,
+      }));
+      setCategories(converted);
+      if (!selectedCategoryId && converted.length > 0) {
+        setSelectedCategoryId(converted[0].id);
+        setSelectedCategoryName(converted[0].name);
+      }
+    }
+  }, [localCategories, categories.length, selectedCategoryId]);
 
   const handleCategoryChange = (val: number) => {
     setSelectedCategoryId(val);
