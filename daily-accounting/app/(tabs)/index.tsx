@@ -17,10 +17,11 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { authenticate, getCategories, getCurrencies } from "../../services/odooApi";
+import { authenticate, getCurrencies } from "../../services/odooApi";
+import { useCategories } from "../../store/categoriesStore";
 import { useQueue } from "../../store/queueStore";
 import { useSettings } from "../../store/settingsStore";
-import { OdooCategory, OdooCurrency } from "../../types/odoo";
+import { OdooCurrency } from "../../types/odoo";
 
 function formatDate(d: Date): string {
   const y = d.getFullYear();
@@ -32,6 +33,7 @@ function formatDate(d: Date): string {
 export default function EntryScreen() {
   const { settings, isLoaded } = useSettings();
   const { enqueue, isOnline, isSyncing, queue } = useQueue();
+  const { categories, isLoading: catsLoading, error: catsError, refreshCategories } = useCategories();
 
   const [date, setDate] = useState<Date>(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -41,11 +43,8 @@ export default function EntryScreen() {
   const [selectedCategoryName, setSelectedCategoryName] = useState("");
   const [currency, setCurrency] = useState(settings.defaultCurrency || "USD");
 
-  const [categories, setCategories] = useState<OdooCategory[]>([]);
   const [currencies, setCurrencies] = useState<OdooCurrency[]>([]);
-  const [loadingData, setLoadingData] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [dataError, setDataError] = useState<string | null>(null);
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -56,30 +55,26 @@ export default function EntryScreen() {
     setCurrency(settings.defaultCurrency || "USD");
   }, [settings.defaultCurrency]);
 
-  const loadData = useCallback(async () => {
+  // Auto-select first category when categories load and none is selected
+  useEffect(() => {
+    if (categories.length > 0 && !selectedCategoryId) {
+      setSelectedCategoryId(categories[0].id);
+      setSelectedCategoryName(categories[0].name);
+    }
+  }, [categories, selectedCategoryId]);
+
+  const loadCurrencies = useCallback(async () => {
     if (!isConfigured || !isLoaded || !isOnline) return;
-    setLoadingData(true);
-    setDataError(null);
     try {
       const uid = await authenticate(settings);
-      const [cats, curs] = await Promise.all([
-        getCategories(settings, uid),
-        getCurrencies(settings, uid),
-      ]);
-      setCategories(cats);
+      const curs = await getCurrencies(settings, uid);
       setCurrencies(curs);
-      if (cats.length > 0 && !selectedCategoryId) {
-        setSelectedCategoryId(cats[0].id);
-        setSelectedCategoryName(cats[0].name);
-      }
-    } catch (e: unknown) {
-      setDataError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoadingData(false);
+    } catch {
+      // currencies fall back to manual text input
     }
-  }, [isConfigured, isLoaded, isOnline, settings, selectedCategoryId]);
+  }, [isConfigured, isLoaded, isOnline, settings]);
 
-  useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
+  useFocusEffect(useCallback(() => { loadCurrencies(); }, [loadCurrencies]));
 
   const handleCategoryChange = (val: number) => {
     setSelectedCategoryId(val);
@@ -95,6 +90,7 @@ export default function EntryScreen() {
     if (!selectedCategoryId || !selectedCategoryName) {
       Alert.alert("No category", "Please select a category."); return;
     }
+    const selectedCat = categories.find((c) => c.id === selectedCategoryId);
     setSaving(true);
     setSaveError(null);
     setLastSaved(null);
@@ -103,6 +99,8 @@ export default function EntryScreen() {
         date: formatDate(date),
         categoryId: selectedCategoryId,
         categoryName: selectedCategoryName,
+        categoryIsLocal: selectedCat?.isLocal ?? false,
+        categoryEntryType: selectedCat?.entry_type,
         currencyCode: currency.trim().toUpperCase(),
         amount: parsedAmount,
         note: note.trim() || undefined,
@@ -177,7 +175,7 @@ export default function EntryScreen() {
 
         {/* Category */}
         <Text style={styles.label}>Category</Text>
-        {loadingData ? (
+        {catsLoading ? (
           <View style={styles.pickerContainer}>
             <ActivityIndicator size="small" color="#2563EB" />
             <Text style={{ marginLeft: 8, color: "#6B7280" }}>Loading categories…</Text>
@@ -185,15 +183,15 @@ export default function EntryScreen() {
         ) : categories.length === 0 ? (
           <View style={styles.pickerContainer}>
             <Text style={{ color: isOnline ? "#EF4444" : "#D97706", flex: 1, fontSize: 13 }}>
-              {isOnline ? (dataError ?? "No categories found.") : "Offline — connect once to load categories."}
+              {isOnline ? (catsError ?? "No categories found.") : "Offline — connect once to load categories."}
             </Text>
-            {isOnline && <TouchableOpacity onPress={loadData} style={{ paddingHorizontal: 8 }}><Text style={styles.link}>Retry</Text></TouchableOpacity>}
+            {isOnline && <TouchableOpacity onPress={refreshCategories} style={{ paddingHorizontal: 8 }}><Text style={styles.link}>Retry</Text></TouchableOpacity>}
           </View>
         ) : (
           <View style={styles.pickerContainer}>
             <Picker selectedValue={selectedCategoryId} onValueChange={(v) => handleCategoryChange(v as number)} style={styles.picker}>
               {categories.map((cat) => (
-                <Picker.Item key={cat.id} label={`${cat.name} (${cat.entry_type})`} value={cat.id} />
+                <Picker.Item key={cat.id} label={`${cat.name} (${cat.entry_type})${cat.isLocal ? " ⏳" : ""}`} value={cat.id} />
               ))}
             </Picker>
           </View>

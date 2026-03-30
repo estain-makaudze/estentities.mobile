@@ -2,6 +2,7 @@ import * as Notifications from "expo-notifications";
 import { Stack } from "expo-router";
 import { useEffect } from "react";
 import { Platform } from "react-native";
+import { CategoriesProvider } from "../store/categoriesStore";
 import { QueueProvider } from "../store/queueStore";
 import { SettingsProvider } from "../store/settingsStore";
 
@@ -26,9 +27,11 @@ export default function RootLayout() {
 
   return (
     <SettingsProvider>
-      <QueueProvider>
-        <Stack screenOptions={{ headerShown: false }} />
-      </QueueProvider>
+      <CategoriesProvider>
+        <QueueProvider>
+          <Stack screenOptions={{ headerShown: false }} />
+        </QueueProvider>
+      </CategoriesProvider>
     </SettingsProvider>
   );
 }

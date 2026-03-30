@@ -13,8 +13,10 @@ import React, {
 } from "react";
 import {
   authenticate,
+  createCategory,
   createEntry,
   getCurrencyIdByName,
+  getCategories,
   searchTodayEntry,
   updateEntryAmount,
 } from "../services/odooApi";
@@ -33,8 +35,11 @@ export interface QueueItem {
   errorMsg?: string;
   // Entry data
   date: string;           // YYYY-MM-DD
-  categoryId: number;
+  categoryId: number;     // negative when isLocalCategory === true
   categoryName: string;
+  /** Set when the category was created offline and has not been synced to Odoo yet. */
+  categoryIsLocal?: boolean;
+  categoryEntryType?: "expense" | "income";
   currencyCode: string;
   amount: number;
   note?: string;
@@ -155,7 +160,26 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
     for (const item of updated.filter((i) => i.status === "syncing")) {
       try {
         const currencyId = await getCurrencyIdByName(settings, uid, item.currencyCode);
-        const existing = await searchTodayEntry(settings, uid, item.categoryId, item.date);
+
+        // Resolve category: if it was created offline, look it up or create it in Odoo
+        let resolvedCategoryId = item.categoryId;
+        if (item.categoryIsLocal) {
+          const remoteCats = await getCategories(settings, uid);
+          const itemCatNameNorm = item.categoryName.trim().toLowerCase();
+          const match = remoteCats.find(
+            (c) => c.name.trim().toLowerCase() === itemCatNameNorm
+          );
+          if (match) {
+            resolvedCategoryId = match.id;
+          } else {
+            resolvedCategoryId = await createCategory(settings, uid, {
+              name: item.categoryName,
+              entry_type: item.categoryEntryType ?? "expense",
+            });
+          }
+        }
+
+        const existing = await searchTodayEntry(settings, uid, resolvedCategoryId, item.date);
 
         if (existing) {
           await updateEntryAmount(settings, uid, existing.id, existing.amount + item.amount);
@@ -163,7 +187,7 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
           await createEntry(settings, uid, {
             name: `${item.categoryName} – ${item.date}`,
             date: item.date,
-            category_id: item.categoryId,
+            category_id: resolvedCategoryId,
             amount: item.amount,
             currency_id: currencyId,
             note: item.note,

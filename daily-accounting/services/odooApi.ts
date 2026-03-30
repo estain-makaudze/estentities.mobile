@@ -54,6 +54,15 @@ export async function getCategories(
   );
 }
 
+/** Create a new category in Odoo. Returns the new record ID. */
+export async function createCategory(
+  settings: OdooSettings,
+  uid: number,
+  vals: { name: string; entry_type: "expense" | "income"; color?: number }
+): Promise<number> {
+  return callKw<number>(settings, uid, "daily.category", "create", [vals]);
+}
+
 // ── Currencies ───────────────────────────────────────────────────────────────
 
 export async function getCurrencies(

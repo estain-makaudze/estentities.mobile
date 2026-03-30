@@ -56,6 +56,7 @@ export default function TabLayout() {
         options={{
           title: "New Entry",
           tabBarLabel: "Entry",
+          href: null, // Hidden from tab bar – accessible via FAB on Dashboard
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="add-circle-outline" size={size} color={color} />
           ),
@@ -68,6 +69,16 @@ export default function TabLayout() {
           tabBarLabel: "History",
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="list-outline" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="categories"
+        options={{
+          title: "Categories",
+          tabBarLabel: "Categories",
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="pricetag-outline" size={size} color={color} />
           ),
         }}
       />

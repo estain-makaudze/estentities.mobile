@@ -1,7 +1,7 @@
 // Dashboard screen – landing page showing expense summaries and daily reminder
 import { Ionicons } from "@expo/vector-icons";
 import * as Notifications from "expo-notifications";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -186,6 +186,7 @@ function MonthBarCard({ month, isLoading }: { month: MonthSummary; isLoading: bo
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 export default function DashboardScreen() {
   const { settings, isLoaded } = useSettings();
+  const router = useRouter();
 
   const [todayEntries, setTodayEntries] = useState<OdooDailyEntry[]>([]);
   const [monthEntries, setMonthEntries] = useState<OdooDailyEntry[]>([]);
@@ -304,6 +305,7 @@ export default function DashboardScreen() {
   }
 
   return (
+    <View style={{ flex: 1 }}>
     <ScrollView
       style={styles.root}
       contentContainerStyle={styles.container}
@@ -401,6 +403,16 @@ export default function DashboardScreen() {
       {/* Pull-to-refresh hint */}
       <Text style={styles.refreshHint}>↓ Pull down to refresh</Text>
     </ScrollView>
+
+      {/* FAB – New Entry */}
+      <TouchableOpacity
+        style={styles.fab}
+        onPress={() => router.navigate("/(tabs)/index")}
+        activeOpacity={0.85}
+      >
+        <Ionicons name="add" size={28} color="#FFFFFF" />
+      </TouchableOpacity>
+    </View>
   );
 }
 
@@ -531,6 +543,24 @@ const styles = StyleSheet.create({
     color: "#D1D5DB",
     fontSize: 12,
     marginTop: 20,
+  },
+
+  // FAB
+  fab: {
+    position: "absolute",
+    bottom: 24,
+    right: 24,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#2563EB",
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 6,
   },
 });
 
