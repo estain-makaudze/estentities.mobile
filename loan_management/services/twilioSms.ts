@@ -114,7 +114,33 @@ export function buildPaymentSms(item: LocalCollection, schedule: LoanSchedule): 
   return msg;
 }
 
-// ── Main export ───────────────────────────────────────────────────────────────
+// ── Payment line SMS builder (from ScheduleDetailModal mark-paid) ─────────────
+
+/**
+ * Builds an acknowledgment/receipt SMS for a schedule line that was just marked
+ * as paid. Includes the next upcoming unpaid line if provided.
+ */
+export function buildPaidLineSms(
+  partnerName: string,
+  paidAmount: number,
+  paidDate: string,
+  currency: string,
+  nextLine: { payment_date: string; expected_amount: number } | null
+): string {
+  const paidFormatted = formatMoney(paidAmount, currency);
+  const paidDateFormatted = formatDateLabel(paidDate);
+
+  let msg = `Hie ${partnerName}. We have received your payment of ${paidFormatted} on ${paidDateFormatted}.`;
+
+  if (nextLine) {
+    const nextAmount = formatMoney(nextLine.expected_amount, currency);
+    const nextDate = formatDateLabel(nextLine.payment_date);
+    msg += ` Looking forward to your payment of ${nextAmount} on ${nextDate}.`;
+  }
+
+  msg += ` Thank you!`;
+  return msg;
+}
 
 /**
  * Fetches the partner phone from Odoo, builds the payment SMS and fires it

@@ -180,15 +180,17 @@ function SmsPreviewModal({
           // Payment confirmation message
           setMessage(buildPaymentSms(item, schedule));
         } else {
-          // Payment reminder message for pending collections
-          const ref = item.invoiceName || item.scheduleName;
-          let msg = `Dear ${item.partnerName}, this is a reminder that your payment of ${formatMoney(item.expectedAmount, item.currency)}`;
-          if (ref) msg += ` for ${ref}`;
-          msg += ` was due on ${formatDateLabel(item.linePaymentDate)}.`;
-          if (schedule.due_amount > 0) {
-            msg += ` Total outstanding: ${formatMoney(schedule.due_amount, item.currency)}.`;
+          // Acknowledgment / receipt message for locally logged (pending) collections
+          let msg = `Hie ${item.partnerName}. Thank you for your payment of ${formatMoney(item.collectedAmount, item.currency)}.`;
+          if (schedule.next_payment_date) {
+            const nextDate = formatDateLabel(schedule.next_payment_date);
+            if (schedule.next_single_amount > 0) {
+              msg += ` Looking forward to your payment of ${formatMoney(schedule.next_single_amount, item.currency)} on ${nextDate}.`;
+            } else {
+              msg += ` Looking forward to your payment on ${nextDate}.`;
+            }
           }
-          msg += ` Please make your payment at your earliest convenience. Thank you!`;
+          msg += ` Thank you!`;
           setMessage(msg);
         }
       } catch (e: unknown) {
@@ -243,7 +245,7 @@ function SmsPreviewModal({
             <Ionicons name="close" size={22} color="#374151" />
           </TouchableOpacity>
           <Text style={styles.smsModalTitle}>
-            {isRecorded ? "Payment Confirmation" : "Payment Reminder"}
+            {isRecorded ? "Payment Confirmation" : "Payment Acknowledgement"}
           </Text>
           <View style={{ width: 36 }} />
         </View>
