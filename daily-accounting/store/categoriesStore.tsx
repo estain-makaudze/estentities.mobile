@@ -55,7 +55,7 @@ export function CategoriesProvider({ children }: { children: React.ReactNode }) 
           try {
             const parsed = JSON.parse(raw);
             if (Array.isArray(parsed) && parsed.length > 0) setCategories(parsed);
-          } catch {}
+          } catch (e) { console.error("Failed to parse categories", e); }
         }
       })
       .finally(() => setIsLoaded(true));

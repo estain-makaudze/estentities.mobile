@@ -33,7 +33,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     AsyncStorage.getItem(AUTH_KEY)
       .then((raw) => {
         if (raw) {
-          try { setUser(JSON.parse(raw)); } catch {}
+          try { setUser(JSON.parse(raw)); } catch (e) { console.error("Failed to parse auth session", e); }
         }
       })
       .finally(() => setIsLoading(false));

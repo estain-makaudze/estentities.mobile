@@ -43,7 +43,7 @@ export function DebtsProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     AsyncStorage.getItem(DEBTS_KEY)
       .then((raw) => {
-        if (raw) { try { setDebts(JSON.parse(raw)); } catch {} }
+        if (raw) { try { setDebts(JSON.parse(raw)); } catch (e) { console.error("Failed to parse debts", e); } }
       })
       .finally(() => setIsLoaded(true));
   }, []);

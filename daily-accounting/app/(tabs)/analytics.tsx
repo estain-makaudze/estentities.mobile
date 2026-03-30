@@ -65,8 +65,9 @@ function fmt(amount: number, currency: string) {
 function SimpleBar({ value, max, color }: { value: number; max: number; color: string }) {
   const pct = max > 0 ? Math.min(100, Math.max(4, (value / max) * 100)) : 4;
   return (
-    <View style={{ height: 10, backgroundColor: "#F1F5F9", borderRadius: 5, overflow: "hidden" }}>
-      <View style={{ width: `${pct}%` as any, height: 10, backgroundColor: color, borderRadius: 5 }} />
+    <View style={{ height: 10, backgroundColor: "#F1F5F9", borderRadius: 5, overflow: "hidden", flexDirection: "row" }}>
+      <View style={{ flex: pct, height: 10, backgroundColor: color, borderRadius: 5 }} />
+      <View style={{ flex: 100 - pct }} />
     </View>
   );
 }
