@@ -19,26 +19,17 @@ import {
   extractCustomPercentages,
 } from "../utils/splits";
 
-const CATEGORIES = [
-  "Groceries",
-  "Utilities",
-  "Rent",
-  "Transport",
-  "Dining",
-  "Health",
-  "Entertainment",
-  "Other",
-];
-
 export default function AddExpenseScreen() {
   const { state, addExpense, getCategoryConfig } = useApp();
   const router = useRouter();
-  const { users } = state;
+  const { users, customCategories } = state;
+  const categoryNames = customCategories.map((c) => c.name);
+  const defaultCategory = categoryNames[0] ?? "Other";
 
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [paidBy, setPaidBy] = useState(users[0]?.id ?? "");
-  const [category, setCategory] = useState("Other");
+  const [category, setCategory] = useState(defaultCategory);
   const [note, setNote] = useState("");
   const [splitMode, setSplitMode] = useState<SplitMode>("equal");
 
@@ -184,7 +175,7 @@ export default function AddExpenseScreen() {
 
         <Text style={styles.sectionTitle}>Category</Text>
         <View style={styles.pillRow}>
-          {CATEGORIES.map((cat) => (
+          {categoryNames.map((cat) => (
             <TouchableOpacity
               key={cat}
               style={[

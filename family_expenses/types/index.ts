@@ -45,3 +45,18 @@ export interface CategoryConfig {
   /** null = no default split (payer owns 100%). Otherwise default percentage per user. */
   defaultSplits: SplitEntry[] | null;
 }
+
+/** A user-configurable expense category */
+export interface CustomCategory {
+  id: string;
+  name: string;
+  emoji: string;
+}
+
+/** Stored auth account (local device credentials) */
+export interface AuthAccount {
+  id: string;
+  name: string;
+  email: string;
+  passwordHash: string;
+}

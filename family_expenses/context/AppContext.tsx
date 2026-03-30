@@ -5,7 +5,7 @@ import React, {
   useEffect,
   useReducer,
 } from "react";
-import { User, Expense, Settlement, CategoryConfig } from "../types";
+import { User, Expense, Settlement, CategoryConfig, CustomCategory } from "../types";
 import {
   loadUsers,
   saveUsers,
@@ -15,8 +15,24 @@ import {
   saveSettlements,
   loadCategoryConfigs,
   saveCategoryConfigs,
+  loadCustomCategories,
+  saveCustomCategories,
 } from "../utils/storage";
 import { USER_COLORS } from "../constants/colors";
+
+// ---------------------------------------------------------------------------
+// Default categories (used when none are stored yet)
+// ---------------------------------------------------------------------------
+export const DEFAULT_CATEGORIES: CustomCategory[] = [
+  { id: "groceries", name: "Groceries", emoji: "🛒" },
+  { id: "utilities", name: "Utilities", emoji: "💡" },
+  { id: "rent", name: "Rent", emoji: "🏠" },
+  { id: "transport", name: "Transport", emoji: "🚗" },
+  { id: "dining", name: "Dining", emoji: "🍽️" },
+  { id: "health", name: "Health", emoji: "💊" },
+  { id: "entertainment", name: "Entertainment", emoji: "🎬" },
+  { id: "other", name: "Other", emoji: "📦" },
+];
 
 // ---------------------------------------------------------------------------
 // State shape
@@ -27,6 +43,7 @@ interface AppState {
   expenses: Expense[];
   settlements: Settlement[];
   categoryConfigs: CategoryConfig[];
+  customCategories: CustomCategory[];
   loaded: boolean;
 }
 
@@ -35,6 +52,7 @@ const initialState: AppState = {
   expenses: [],
   settlements: [],
   categoryConfigs: [],
+  customCategories: [],
   loaded: false,
 };
 
@@ -43,7 +61,7 @@ const initialState: AppState = {
 // ---------------------------------------------------------------------------
 
 type Action =
-  | { type: "LOAD"; payload: { users: User[]; expenses: Expense[]; settlements: Settlement[]; categoryConfigs: CategoryConfig[] } }
+  | { type: "LOAD"; payload: { users: User[]; expenses: Expense[]; settlements: Settlement[]; categoryConfigs: CategoryConfig[]; customCategories: CustomCategory[] } }
   | { type: "ADD_USER"; payload: User }
   | { type: "UPDATE_USER"; payload: User }
   | { type: "DELETE_USER"; payload: string }
@@ -52,7 +70,9 @@ type Action =
   | { type: "DELETE_EXPENSE"; payload: string }
   | { type: "ADD_SETTLEMENT"; payload: Settlement }
   | { type: "DELETE_SETTLEMENT"; payload: string }
-  | { type: "UPDATE_CATEGORY_CONFIG"; payload: CategoryConfig };
+  | { type: "UPDATE_CATEGORY_CONFIG"; payload: CategoryConfig }
+  | { type: "ADD_CATEGORY"; payload: CustomCategory }
+  | { type: "DELETE_CATEGORY"; payload: string };
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -118,6 +138,23 @@ function reducer(state: AppState, action: Action): AppState {
         };
       }
 
+    case "ADD_CATEGORY":
+      if (state.customCategories.find((c) => c.id === action.payload.id)) {
+        return state;
+      }
+      return {
+        ...state,
+        customCategories: [...state.customCategories, action.payload],
+      };
+
+    case "DELETE_CATEGORY":
+      return {
+        ...state,
+        customCategories: state.customCategories.filter(
+          (c) => c.id !== action.payload
+        ),
+      };
+
     default:
       return state;
   }
@@ -139,6 +176,8 @@ interface AppContextValue {
   deleteSettlement: (id: string) => void;
   updateCategoryConfig: (config: CategoryConfig) => void;
   getCategoryConfig: (category: string) => CategoryConfig | undefined;
+  addCategory: (name: string, emoji: string) => void;
+  deleteCategory: (id: string) => void;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -158,13 +197,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Load persisted data on mount.
   useEffect(() => {
     (async () => {
-      const [users, expenses, settlements, categoryConfigs] = await Promise.all([
+      const [users, expenses, settlements, categoryConfigs, customCategories] = await Promise.all([
         loadUsers(),
         loadExpenses(),
         loadSettlements(),
         loadCategoryConfigs(),
+        loadCustomCategories(),
       ]);
-      dispatch({ type: "LOAD", payload: { users, expenses, settlements, categoryConfigs } });
+      dispatch({
+        type: "LOAD",
+        payload: {
+          users,
+          expenses,
+          settlements,
+          categoryConfigs,
+          customCategories: customCategories.length > 0 ? customCategories : DEFAULT_CATEGORIES,
+        },
+      });
     })();
   }, []);
 
@@ -175,7 +224,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     saveExpenses(state.expenses);
     saveSettlements(state.settlements);
     saveCategoryConfigs(state.categoryConfigs);
-  }, [state.users, state.expenses, state.settlements, state.categoryConfigs, state.loaded]);
+    saveCustomCategories(state.customCategories);
+  }, [state.users, state.expenses, state.settlements, state.categoryConfigs, state.customCategories, state.loaded]);
 
   const addUser = useCallback((user: Omit<User, "id">) => {
     const nextColor =
@@ -222,6 +272,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return state.categoryConfigs.find((c) => c.category === category);
   }, [state.categoryConfigs]);
 
+  const addCategory = useCallback((name: string, emoji: string) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    dispatch({ type: "ADD_CATEGORY", payload: { id, name: name.trim(), emoji } });
+  }, []);
+
+  const deleteCategory = useCallback((id: string) => {
+    dispatch({ type: "DELETE_CATEGORY", payload: id });
+  }, []);
+
   return (
     <AppContext.Provider
       value={{
@@ -236,6 +295,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         deleteSettlement,
         updateCategoryConfig,
         getCategoryConfig,
+        addCategory,
+        deleteCategory,
       }}
     >
       {children}

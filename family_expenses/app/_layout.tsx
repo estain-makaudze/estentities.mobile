@@ -1,68 +1,67 @@
-import { Tabs } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
+import { Stack, useRouter, useSegments } from "expo-router";
+import { useEffect } from "react";
+import { ActivityIndicator, View } from "react-native";
 import { AppProvider } from "../context/AppContext";
+import { AuthProvider, useAuth } from "../context/AuthContext";
+
+function AuthGuard() {
+  const { session, loading } = useAuth();
+  const segments = useSegments();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (loading) return;
+    const inTabs = segments[0] === "(tabs)";
+    const inLogin = segments[0] === "login";
+    if (!session && inTabs) {
+      router.replace("/login");
+    } else if (session && inLogin) {
+      router.replace("/(tabs)");
+    }
+  }, [session, loading, segments]);
+
+  if (loading) {
+    return (
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#F2F2F7" }}>
+        <ActivityIndicator size="large" color="#4A90D9" />
+      </View>
+    );
+  }
+
+  return null;
+}
 
 export default function RootLayout() {
   return (
-    <AppProvider>
-      <Tabs
-        screenOptions={{
-          tabBarActiveTintColor: "#4A90D9",
-          tabBarInactiveTintColor: "#8E8E93",
-          headerStyle: { backgroundColor: "#4A90D9" },
-          headerTintColor: "#fff",
-          headerTitleStyle: { fontWeight: "bold" },
-        }}
-      >
-        <Tabs.Screen
-          name="index"
-          options={{
-            title: "Dashboard",
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="home" size={size} color={color} />
-            ),
-          }}
-        />
-        <Tabs.Screen
-          name="expenses"
-          options={{
-            title: "Expenses",
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="receipt" size={size} color={color} />
-            ),
-          }}
-        />
-        <Tabs.Screen
-          name="settlements"
-          options={{
-            title: "Settlements",
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="swap-horizontal" size={size} color={color} />
-            ),
-          }}
-        />
-        <Tabs.Screen
-          name="users"
-          options={{
-            title: "Users",
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="people" size={size} color={color} />
-            ),
-          }}
-        />
-        <Tabs.Screen
-          name="settings"
-          options={{
-            title: "Settings",
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="settings" size={size} color={color} />
-            ),
-          }}
-        />
-        {/* Hidden modal screens */}
-        <Tabs.Screen name="add-expense" options={{ href: null }} />
-        <Tabs.Screen name="add-settlement" options={{ href: null }} />
-      </Tabs>
-    </AppProvider>
+    <AuthProvider>
+      <AppProvider>
+        <Stack>
+          <Stack.Screen name="index" options={{ headerShown: false }} />
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="login" options={{ headerShown: false }} />
+          <Stack.Screen
+            name="add-expense"
+            options={{
+              title: "Add Expense",
+              headerStyle: { backgroundColor: "#4A90D9" },
+              headerTintColor: "#fff",
+              headerTitleStyle: { fontWeight: "bold" },
+              presentation: "modal",
+            }}
+          />
+          <Stack.Screen
+            name="add-settlement"
+            options={{
+              title: "Record Payment",
+              headerStyle: { backgroundColor: "#2ECC71" },
+              headerTintColor: "#fff",
+              headerTitleStyle: { fontWeight: "bold" },
+              presentation: "modal",
+            }}
+          />
+        </Stack>
+        <AuthGuard />
+      </AppProvider>
+    </AuthProvider>
   );
 }

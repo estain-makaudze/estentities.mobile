@@ -1,15 +1,14 @@
-// Tab navigator for Daily Accounting app
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 import { StyleSheet, Text, View } from "react-native";
 import { useQueue } from "../../store/queueStore";
 
-function QueueTabIcon({ color, size }: { color: string; size: number }) {
+function EntryTabIcon({ color, size }: { color: string; size: number }) {
   const { queue } = useQueue();
   const count = queue.filter((i) => i.status === "pending" || i.status === "failed").length;
   return (
     <View>
-      <Ionicons name="cloud-upload-outline" size={size} color={color} />
+      <Ionicons name="add-circle-outline" size={size} color={color} />
       {count > 0 && (
         <View style={badge.dot}>
           <Text style={badge.text}>{count > 9 ? "9+" : count}</Text>
@@ -56,8 +55,16 @@ export default function TabLayout() {
         options={{
           title: "New Entry",
           tabBarLabel: "Entry",
+          tabBarIcon: ({ color, size }) => <EntryTabIcon color={color} size={size} />,
+        }}
+      />
+      <Tabs.Screen
+        name="analytics"
+        options={{
+          title: "Analytics",
+          tabBarLabel: "Analytics",
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="add-circle-outline" size={size} color={color} />
+            <Ionicons name="bar-chart-outline" size={size} color={color} />
           ),
         }}
       />
@@ -72,14 +79,6 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="queue"
-        options={{
-          title: "Sync Queue",
-          tabBarLabel: "Queue",
-          tabBarIcon: ({ color, size }) => <QueueTabIcon color={color} size={size} />,
-        }}
-      />
-      <Tabs.Screen
         name="settings"
         options={{
           title: "Settings",
@@ -89,7 +88,7 @@ export default function TabLayout() {
           ),
         }}
       />
+      <Tabs.Screen name="queue" options={{ href: null }} />
     </Tabs>
   );
 }
-
