@@ -20,7 +20,6 @@ function AuthGuard() {
   useEffect(() => {
     if (authLoading || householdLoading) return;
 
-    const inTabs = segments[0] === "(tabs)";
     const inLogin = segments[0] === "login";
     const inSetup = segments[0] === "household-setup";
 
@@ -31,7 +30,7 @@ function AuthGuard() {
     } else {
       if (inLogin || inSetup) router.replace("/(tabs)");
     }
-  }, [session, authLoading, household, householdLoading, segments]);
+  }, [session, authLoading, household, householdLoading, segments, router]);
 
   if (authLoading || householdLoading) {
     return (

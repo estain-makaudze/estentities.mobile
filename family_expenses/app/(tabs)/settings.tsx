@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Alert,
   ScrollView,
@@ -53,7 +53,7 @@ export default function SettingsScreen() {
   };
 
   // ── Default Splits per Category ──────────────────────────────────────────
-  const categoryNames = customCategories.map((c) => c.name);
+  const categoryNames = useMemo(() => customCategories.map((c) => c.name), [customCategories]);
   const [selectedCategory, setSelectedCategory] = useState<string>(categoryNames[0] ?? "");
 
   const config = getCategoryConfig(selectedCategory);
@@ -66,7 +66,7 @@ export default function SettingsScreen() {
     if (categoryNames.length > 0 && !categoryNames.includes(selectedCategory)) {
       setSelectedCategory(categoryNames[0]);
     }
-  }, [customCategories]);
+  }, [categoryNames, selectedCategory]);
 
   React.useEffect(() => {
     const c = getCategoryConfig(selectedCategory);
