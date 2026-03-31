@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -23,9 +24,37 @@ import {
   updateSchedule,
   updateScheduleLine,
 } from "../services/loanApi";
+import {
+  buildPaidLineSms,
+  fetchPartnerPhone,
+  sendSms,
+} from "../services/twilioSms";
 import { useSettings } from "../store/settingsStore";
 import { LoanSchedule, LoanScheduleLine, ScheduleLineState } from "../types/odoo";
+import { DatePickerInput } from "../components/DatePickerInput";
 import { displayMany2One, formatDateLabel, formatMoney, humanizeStatus } from "../utils/format";
+
+// ── Line cache helpers ────────────────────────────────────────────────────────
+
+function lineCacheKey(scheduleId: number): string {
+  return `schedule_lines_v1_${scheduleId}`;
+}
+
+async function saveLinesCache(scheduleId: number, items: LoanScheduleLine[]): Promise<void> {
+  try {
+    await AsyncStorage.setItem(lineCacheKey(scheduleId), JSON.stringify(items));
+  } catch { /* ignore storage errors */ }
+}
+
+async function loadLinesCache(scheduleId: number): Promise<LoanScheduleLine[] | null> {
+  try {
+    const raw = await AsyncStorage.getItem(lineCacheKey(scheduleId));
+    if (!raw) return null;
+    return JSON.parse(raw) as LoanScheduleLine[];
+  } catch {
+    return null;
+  }
+}
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -147,15 +176,8 @@ function LineEditSheet({
           <View style={sheet.handle} />
           <Text style={sheet.title}>Edit Payment Line</Text>
 
-          <Text style={sheet.label}>Payment Date (YYYY-MM-DD)</Text>
-          <TextInput
-            style={sheet.input}
-            value={date}
-            onChangeText={setDate}
-            placeholder="2025-06-01"
-            keyboardType="default"
-            autoCapitalize="none"
-          />
+          <Text style={sheet.label}>Payment Date</Text>
+          <DatePickerInput value={date} onChange={setDate} />
 
           <Text style={sheet.label}>Expected Amount ({currency})</Text>
           <TextInput
@@ -255,14 +277,8 @@ function AddLineSheet({
           <View style={sheet.handle} />
           <Text style={sheet.title}>Add Payment Line</Text>
 
-          <Text style={sheet.label}>Payment Date (YYYY-MM-DD)</Text>
-          <TextInput
-            style={sheet.input}
-            value={date}
-            onChangeText={setDate}
-            placeholder="2025-06-01"
-            autoCapitalize="none"
-          />
+          <Text style={sheet.label}>Payment Date</Text>
+          <DatePickerInput value={date} onChange={setDate} />
 
           <Text style={sheet.label}>Expected Amount ({currency})</Text>
           <TextInput
@@ -473,14 +489,8 @@ function BulkRescheduleSheet({
               {openLinesCount} open line(s) will be canceled and replaced with a new schedule below.
             </Text>
 
-            <Text style={sheet.label}>New Start Date (YYYY-MM-DD)</Text>
-            <TextInput
-              style={sheet.input}
-              value={startDate}
-              onChangeText={setStartDate}
-              placeholder="2025-06-01"
-              autoCapitalize="none"
-            />
+            <Text style={sheet.label}>New Start Date</Text>
+            <DatePickerInput value={startDate} onChange={setStartDate} />
 
             <Text style={sheet.label}>Payment Interval</Text>
             {INTERVALS.map((intv) => (
@@ -743,6 +753,15 @@ export function ScheduleDetailModal({ visible, schedule, onClose, onUpdated }: P
   const [showReschedule, setShowReschedule] = useState(false);
   const [localSchedule, setLocalSchedule] = useState<LoanSchedule | null>(null);
 
+  // SMS state for post-mark-paid acknowledgment
+  const [smsModal, setSmsModal] = useState<{
+    phone: string;
+    message: string;
+    sending: boolean;
+    result: "sent" | "failed" | null;
+    error: string | null;
+  } | null>(null);
+
   // Keep local copy of schedule so we can update status without refetching whole list
   useEffect(() => {
     setLocalSchedule(schedule);
@@ -752,12 +771,24 @@ export function ScheduleDetailModal({ visible, schedule, onClose, onUpdated }: P
     if (!schedule) return;
     setLoadingLines(true);
     setLineError(null);
+
+    // Serve from cache immediately; hide spinner if cache is available
+    const cached = await loadLinesCache(schedule.id);
+    if (cached) {
+      setLines(cached);
+      setLoadingLines(false); // show cached data immediately without blocking spinner
+    }
+
     try {
       const uid = await authenticate(settings);
       const fetched = await fetchScheduleLinesById(settings, uid, schedule.id);
       setLines(fetched);
+      await saveLinesCache(schedule.id, fetched);
     } catch (e: unknown) {
-      setLineError(e instanceof Error ? e.message : String(e));
+      if (!cached) {
+        setLineError(e instanceof Error ? e.message : String(e));
+      }
+      // If we have cached data, silently fail and show cached lines
     } finally {
       setLoadingLines(false);
     }
@@ -812,6 +843,38 @@ export function ScheduleDetailModal({ visible, schedule, onClose, onUpdated }: P
               await changeScheduleLineState(settings, uid, line.id, action);
               await loadLines();
               onUpdated();
+
+              // After marking paid, offer SMS acknowledgment if SMS is enabled
+              if (action === "action_mark_paid" && schedule &&
+                  settings.smsEnabled &&
+                  settings.twilioAccountSid && settings.twilioAuthToken && settings.twilioFromNumber) {
+                const partnerName = Array.isArray(schedule.partner_id) ? schedule.partner_id[1] : "Customer";
+                const freshLines = await loadLinesCache(schedule.id);
+                const nextLine = freshLines
+                  ? freshLines
+                      .filter((l) => l.state === "unpaid" && l.payment_date > line.payment_date)
+                      .sort((a, b) => a.payment_date.localeCompare(b.payment_date))[0] ?? null
+                  : null;
+
+                const builtMsg = buildPaidLineSms(
+                  partnerName,
+                  line.expected_amount,
+                  line.payment_date,
+                  currency,
+                  nextLine
+                );
+
+                // Fetch phone number from Odoo
+                let phone = "";
+                try {
+                  if (Array.isArray(schedule.partner_id)) {
+                    const fetchedPhone = await fetchPartnerPhone(settings, uid, schedule.partner_id[0]);
+                    phone = fetchedPhone ?? "";
+                  }
+                } catch { /* ignore phone fetch errors */ }
+
+                setSmsModal({ phone, message: builtMsg, sending: false, result: null, error: null });
+              }
             } catch (e: unknown) {
               Alert.alert("Error", e instanceof Error ? e.message : String(e));
             } finally {
@@ -908,6 +971,23 @@ export function ScheduleDetailModal({ visible, schedule, onClose, onUpdated }: P
 
   if (!schedule) return null;
 
+  const handleSmsSend = async () => {
+    if (!smsModal) return;
+    setSmsModal((prev) => prev ? { ...prev, sending: true, result: null, error: null } : null);
+    try {
+      await sendSms(
+        settings.twilioAccountSid,
+        settings.twilioAuthToken,
+        settings.twilioFromNumber,
+        smsModal.phone.trim(),
+        smsModal.message.trim()
+      );
+      setSmsModal((prev) => prev ? { ...prev, sending: false, result: "sent" } : null);
+    } catch (e: unknown) {
+      setSmsModal((prev) => prev ? { ...prev, sending: false, result: "failed", error: e instanceof Error ? e.message : String(e) } : null);
+    }
+  };
+
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       {/* Edit line sheet */}
@@ -947,6 +1027,84 @@ export function ScheduleDetailModal({ visible, schedule, onClose, onUpdated }: P
         onClose={() => setShowStatusPicker(false)}
         onSelect={handleSetStatus}
       />
+      {/* Payment receipt SMS modal */}
+      <Modal
+        visible={!!smsModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSmsModal(null)}
+      >
+        <KeyboardAvoidingView
+          style={{ flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.45)" }}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
+          <View style={smsSheet.container}>
+            <View style={smsSheet.handle} />
+            <Text style={smsSheet.title}>Send Receipt Message</Text>
+            <Text style={smsSheet.subtitle}>
+              Send a payment acknowledgment to the customer.
+            </Text>
+
+            {smsModal?.result === "sent" ? (
+              <View style={smsSheet.sentBox}>
+                <Ionicons name="checkmark-circle" size={20} color="#166534" />
+                <Text style={smsSheet.sentText}>Message sent successfully!</Text>
+              </View>
+            ) : null}
+
+            {smsModal?.result === "failed" ? (
+              <View style={smsSheet.failBox}>
+                <Ionicons name="close-circle" size={16} color="#B91C1C" />
+                <Text style={smsSheet.failText}>{smsModal.error ?? "Failed to send"}</Text>
+              </View>
+            ) : null}
+
+            <Text style={smsSheet.label}>Recipient Phone</Text>
+            <TextInput
+              style={smsSheet.input}
+              value={smsModal?.phone ?? ""}
+              onChangeText={(v) => setSmsModal((p) => p ? { ...p, phone: v } : null)}
+              placeholder="+256700000000"
+              keyboardType="phone-pad"
+              autoCapitalize="none"
+            />
+
+            <Text style={smsSheet.label}>Message (tap to edit)</Text>
+            <TextInput
+              style={[smsSheet.input, smsSheet.inputMulti]}
+              value={smsModal?.message ?? ""}
+              onChangeText={(v) => setSmsModal((p) => p ? { ...p, message: v } : null)}
+              multiline
+              numberOfLines={5}
+              textAlignVertical="top"
+            />
+
+            <View style={smsSheet.actions}>
+              <TouchableOpacity style={smsSheet.cancelBtn} onPress={() => setSmsModal(null)}>
+                <Text style={smsSheet.cancelText}>
+                  {smsModal?.result === "sent" ? "Done" : "Skip"}
+                </Text>
+              </TouchableOpacity>
+              {smsModal?.result !== "sent" ? (
+                <TouchableOpacity
+                  style={[smsSheet.sendBtn, smsModal?.sending && { opacity: 0.7 }]}
+                  onPress={handleSmsSend}
+                  disabled={smsModal?.sending}
+                >
+                  {smsModal?.sending ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <Ionicons name="send-outline" size={16} color="#FFFFFF" />
+                      <Text style={smsSheet.sendText}>Send</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
 
       <View style={modal.root}>
         {/* Header */}
@@ -1551,3 +1709,113 @@ const reschedStyle = StyleSheet.create({
   },
 });
 
+
+
+const smsSheet = StyleSheet.create({
+  container: {
+    backgroundColor: "#FFFFFF",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    paddingBottom: Platform.OS === "ios" ? 36 : 24,
+    gap: 12,
+  },
+  handle: {
+    width: 40,
+    height: 4,
+    backgroundColor: "#D1D5DB",
+    borderRadius: 2,
+    alignSelf: "center",
+    marginBottom: 4,
+  },
+  title: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#111827",
+  },
+  subtitle: {
+    fontSize: 13,
+    color: "#6B7280",
+    lineHeight: 18,
+  },
+  label: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#374151",
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+    borderRadius: 10,
+    padding: 12,
+    fontSize: 14,
+    backgroundColor: "#F9FAFB",
+    color: "#111827",
+  },
+  inputMulti: {
+    height: 110,
+    textAlignVertical: "top",
+  },
+  sentBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#F0FDF4",
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
+  },
+  sentText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#166534",
+  },
+  failBox: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    backgroundColor: "#FEF2F2",
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#FECACA",
+  },
+  failText: {
+    flex: 1,
+    fontSize: 13,
+    color: "#B91C1C",
+  },
+  actions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 4,
+  },
+  cancelBtn: {
+    flex: 1,
+    backgroundColor: "#F3F4F6",
+    borderRadius: 10,
+    padding: 14,
+    alignItems: "center",
+  },
+  cancelText: {
+    fontWeight: "700",
+    color: "#374151",
+    fontSize: 15,
+  },
+  sendBtn: {
+    flex: 2,
+    backgroundColor: "#0F766E",
+    borderRadius: 10,
+    padding: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  sendText: {
+    fontWeight: "700",
+    color: "#FFFFFF",
+    fontSize: 15,
+  },
+});
