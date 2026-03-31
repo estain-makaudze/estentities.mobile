@@ -40,9 +40,9 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="users"
+        name="household"
         options={{
-          title: "Users",
+          title: "Household",
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="people" size={size} color={color} />
           ),
@@ -57,6 +57,8 @@ export default function TabsLayout() {
           ),
         }}
       />
+      {/* users.tsx is kept for backward-compat deep links but not shown in tab bar */}
+      <Tabs.Screen name="users" options={{ href: null }} />
     </Tabs>
   );
 }

@@ -9,12 +9,14 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useApp } from "../../context/AppContext";
+import { useHousehold } from "../../context/HouseholdContext";
 import { Settlement } from "../../types";
 
 export default function SettlementsScreen() {
   const { state, deleteSettlement } = useApp();
+  const { members: users } = useHousehold();
   const router = useRouter();
-  const { users, settlements } = state;
+  const { settlements } = state;
 
   const getUserName = (id: string) =>
     users.find((u) => u.id === id)?.name ?? "Unknown";

@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useApp } from "../../context/AppContext";
+import { useHousehold } from "../../context/HouseholdContext";
 import { Expense } from "../../types";
 
 function startOfMonth(date: Date): Date {
@@ -25,9 +26,10 @@ function endOfLastMonth(date: Date): Date {
 
 export default function ExpensesScreen() {
   const { state, deleteExpense } = useApp();
+  const { members: users } = useHousehold();
   const router = useRouter();
 
-  const { expenses, users, customCategories } = state;
+  const { expenses, customCategories } = state;
   const categoryNames = ["All", ...customCategories.map((c) => c.name)];
   const [selectedCategory, setSelectedCategory] = useState("All");
 

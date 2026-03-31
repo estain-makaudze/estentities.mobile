@@ -53,10 +53,29 @@ export interface CustomCategory {
   emoji: string;
 }
 
-/** Stored auth account (local device credentials) */
-export interface AuthAccount {
+// ---------------------------------------------------------------------------
+// Supabase-backed types
+// ---------------------------------------------------------------------------
+
+/** Public profile stored in the `profiles` table. */
+export interface UserProfile {
   id: string;
   name: string;
   email: string;
-  passwordHash: string;
+  color: string;
+}
+
+/** A household that users share. */
+export interface Household {
+  id: string;
+  name: string;
+  invite_code: string;
+  created_at: string;
+}
+
+/** Join table row linking a user to a household. */
+export interface HouseholdMember {
+  household_id: string;
+  user_id: string;
+  joined_at: string;
 }

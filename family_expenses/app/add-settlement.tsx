@@ -12,17 +12,17 @@ import {
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useApp } from "../context/AppContext";
+import { useHousehold } from "../context/HouseholdContext";
 
 export default function AddSettlementScreen() {
-  const { state, addSettlement } = useApp();
+  const { addSettlement } = useApp();
+  const { members: users } = useHousehold();
   const router = useRouter();
   const params = useLocalSearchParams<{
     fromUserId?: string;
     toUserId?: string;
     suggestedAmount?: string;
   }>();
-
-  const { users } = state;
 
   const [fromUserId, setFromUserId] = useState(
     params.fromUserId ?? users[0]?.id ?? ""
@@ -67,13 +67,13 @@ export default function AddSettlementScreen() {
     return (
       <View style={styles.center}>
         <Text style={styles.noUsersText}>
-          You need at least two users to record a settlement.
+          You need at least two household members to record a settlement.
         </Text>
         <TouchableOpacity
           style={styles.goUsersBtn}
-          onPress={() => router.push("/users")}
+          onPress={() => router.push("/(tabs)/household")}
         >
-          <Text style={styles.goUsersBtnText}>Manage Users</Text>
+          <Text style={styles.goUsersBtnText}>View Household</Text>
         </TouchableOpacity>
       </View>
     );

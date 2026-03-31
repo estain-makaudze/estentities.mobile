@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useApp } from "../context/AppContext";
+import { useHousehold } from "../context/HouseholdContext";
 import { SplitEntry } from "../types";
 import {
   SplitMode,
@@ -21,8 +22,9 @@ import {
 
 export default function AddExpenseScreen() {
   const { state, addExpense, getCategoryConfig } = useApp();
+  const { members: users } = useHousehold();
   const router = useRouter();
-  const { users, customCategories } = state;
+  const { customCategories } = state;
   const categoryNames = customCategories.map((c) => c.name);
   const defaultCategory = categoryNames[0] ?? "Other";
 
@@ -111,13 +113,13 @@ export default function AddExpenseScreen() {
     return (
       <View style={styles.center}>
         <Text style={styles.noUsersText}>
-          Please add at least one user before recording expenses.
+          No household members found. Invite family members to get started.
         </Text>
         <TouchableOpacity
           style={styles.goUsersBtn}
-          onPress={() => router.push("/users")}
+          onPress={() => router.push("/(tabs)/household")}
         >
-          <Text style={styles.goUsersBtnText}>Go to Users</Text>
+          <Text style={styles.goUsersBtnText}>Go to Household</Text>
         </TouchableOpacity>
       </View>
     );

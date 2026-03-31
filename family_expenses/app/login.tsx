@@ -173,7 +173,7 @@ export default function LoginScreen() {
         </View>
 
         <Text style={styles.syncNote}>
-          💡 Data is stored on this device. To sync across multiple devices, connect a cloud backend.
+          🔒 Your data is securely stored in the cloud and syncs across devices.
         </Text>
       </ScrollView>
     </KeyboardAvoidingView>

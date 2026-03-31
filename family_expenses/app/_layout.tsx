@@ -3,24 +3,37 @@ import { useEffect } from "react";
 import { ActivityIndicator, View } from "react-native";
 import { AppProvider } from "../context/AppContext";
 import { AuthProvider, useAuth } from "../context/AuthContext";
+import { HouseholdProvider, useHousehold } from "../context/HouseholdContext";
+import { useSync } from "../hooks/useSync";
+
+function SyncRunner() {
+  useSync();
+  return null;
+}
 
 function AuthGuard() {
-  const { session, loading } = useAuth();
+  const { session, loading: authLoading } = useAuth();
+  const { household, loading: householdLoading } = useHousehold();
   const segments = useSegments();
   const router = useRouter();
 
   useEffect(() => {
-    if (loading) return;
+    if (authLoading || householdLoading) return;
+
     const inTabs = segments[0] === "(tabs)";
     const inLogin = segments[0] === "login";
-    if (!session && inTabs) {
-      router.replace("/login");
-    } else if (session && inLogin) {
-      router.replace("/(tabs)");
-    }
-  }, [session, loading, segments]);
+    const inSetup = segments[0] === "household-setup";
 
-  if (loading) {
+    if (!session) {
+      if (!inLogin) router.replace("/login");
+    } else if (!household) {
+      if (!inSetup) router.replace("/household-setup");
+    } else {
+      if (inLogin || inSetup) router.replace("/(tabs)");
+    }
+  }, [session, authLoading, household, householdLoading, segments]);
+
+  if (authLoading || householdLoading) {
     return (
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#F2F2F7" }}>
         <ActivityIndicator size="large" color="#4A90D9" />
@@ -34,34 +47,38 @@ function AuthGuard() {
 export default function RootLayout() {
   return (
     <AuthProvider>
-      <AppProvider>
-        <Stack>
-          <Stack.Screen name="index" options={{ headerShown: false }} />
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="login" options={{ headerShown: false }} />
-          <Stack.Screen
-            name="add-expense"
-            options={{
-              title: "Add Expense",
-              headerStyle: { backgroundColor: "#4A90D9" },
-              headerTintColor: "#fff",
-              headerTitleStyle: { fontWeight: "bold" },
-              presentation: "modal",
-            }}
-          />
-          <Stack.Screen
-            name="add-settlement"
-            options={{
-              title: "Record Payment",
-              headerStyle: { backgroundColor: "#2ECC71" },
-              headerTintColor: "#fff",
-              headerTitleStyle: { fontWeight: "bold" },
-              presentation: "modal",
-            }}
-          />
-        </Stack>
-        <AuthGuard />
-      </AppProvider>
+      <HouseholdProvider>
+        <AppProvider>
+          <Stack>
+            <Stack.Screen name="index" options={{ headerShown: false }} />
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="login" options={{ headerShown: false }} />
+            <Stack.Screen name="household-setup" options={{ headerShown: false }} />
+            <Stack.Screen
+              name="add-expense"
+              options={{
+                title: "Add Expense",
+                headerStyle: { backgroundColor: "#4A90D9" },
+                headerTintColor: "#fff",
+                headerTitleStyle: { fontWeight: "bold" },
+                presentation: "modal",
+              }}
+            />
+            <Stack.Screen
+              name="add-settlement"
+              options={{
+                title: "Record Payment",
+                headerStyle: { backgroundColor: "#2ECC71" },
+                headerTintColor: "#fff",
+                headerTitleStyle: { fontWeight: "bold" },
+                presentation: "modal",
+              }}
+            />
+          </Stack>
+          <AuthGuard />
+          <SyncRunner />
+        </AppProvider>
+      </HouseholdProvider>
     </AuthProvider>
   );
 }

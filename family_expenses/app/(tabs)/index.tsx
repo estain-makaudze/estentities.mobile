@@ -10,13 +10,15 @@ import {
 import { useRouter } from "expo-router";
 import { useApp } from "../../context/AppContext";
 import { useAuth } from "../../context/AuthContext";
+import { useHousehold } from "../../context/HouseholdContext";
 import { computeNetBalances, computeDebtSummary, totalPaidByUser } from "../../utils/balance";
 
 export default function DashboardScreen() {
   const { state } = useApp();
-  const { session, logout } = useAuth();
+  const { profile, logout } = useAuth();
+  const { members, household } = useHousehold();
   const router = useRouter();
-  const { users, expenses, settlements, loaded } = state;
+  const { expenses, settlements, loaded } = state;
 
   if (!loaded) {
     return (
@@ -26,19 +28,21 @@ export default function DashboardScreen() {
     );
   }
 
+  const users = members;
+
   if (users.length === 0) {
     return (
       <View style={styles.center}>
         <Text style={styles.emptyIcon}>👨‍👩‍👧‍👦</Text>
-        <Text style={styles.emptyTitle}>Welcome to Family Expenses</Text>
+        <Text style={styles.emptyTitle}>Welcome to {household?.name ?? "Family Expenses"}</Text>
         <Text style={styles.emptySubtitle}>
-          Start by adding the people who share expenses together.
+          Invite family members using the invite code on the Household tab.
         </Text>
         <TouchableOpacity
           style={styles.ctaButton}
-          onPress={() => router.push("/(tabs)/users")}
+          onPress={() => router.push("/(tabs)/household")}
         >
-          <Text style={styles.ctaButtonText}>Add Family Members</Text>
+          <Text style={styles.ctaButtonText}>View Household</Text>
         </TouchableOpacity>
       </View>
     );
@@ -54,11 +58,8 @@ export default function DashboardScreen() {
   const getUserColor = (id: string) =>
     users.find((u) => u.id === id)?.color ?? "#888";
 
-  // Find which family member matches the logged-in user (by name, case-insensitive)
-  const sessionName = session?.name ?? "";
-  const currentUser = users.find(
-    (u) => u.name.toLowerCase() === sessionName.toLowerCase()
-  );
+  // Match the logged-in user by their Supabase user ID.
+  const currentUser = profile ? users.find((u) => u.id === profile.id) : null;
   const myDebts = currentUser
     ? debts.filter((d) => d.fromUserId === currentUser.id)
     : [];
@@ -76,8 +77,8 @@ export default function DashboardScreen() {
       {/* Greeting + logout */}
       <View style={styles.greetingRow}>
         <View>
-          <Text style={styles.greeting}>Hello, {session?.name ?? "there"} 👋</Text>
-          <Text style={styles.greetingSub}>{session?.email}</Text>
+          <Text style={styles.greeting}>Hello, {profile?.name ?? "there"} 👋</Text>
+          <Text style={styles.greetingSub}>{profile?.email}</Text>
         </View>
         <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
           <Text style={styles.logoutBtnText}>Sign Out</Text>
@@ -160,14 +161,6 @@ export default function DashboardScreen() {
         </>
       )}
 
-      {!currentUser && sessionName && (
-        <View style={styles.infoBox}>
-          <Text style={styles.infoText}>
-            💡 Add a family member named "{sessionName}" to see your personal balance.
-          </Text>
-        </View>
-      )}
-
       {/* Per-user totals */}
       <Text style={styles.sectionTitle}>Who Paid What</Text>
       {users.map((user) => {
@@ -175,7 +168,7 @@ export default function DashboardScreen() {
         return (
           <View key={user.id} style={styles.userRow}>
             <View style={[styles.avatar, { backgroundColor: user.color }]}>
-              <Text style={styles.avatarText}>{user.name[0].toUpperCase()}</Text>
+              <Text style={styles.avatarText}>{(user.name || "?")[0].toUpperCase()}</Text>
             </View>
             <Text style={styles.userName}>{user.name}</Text>
             <Text style={styles.userAmount}>${paid.toFixed(2)}</Text>

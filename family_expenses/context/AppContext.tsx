@@ -5,20 +5,17 @@ import React, {
   useEffect,
   useReducer,
 } from "react";
-import { User, Expense, Settlement, CategoryConfig, CustomCategory } from "../types";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Expense, Settlement, CategoryConfig, CustomCategory, SplitEntry } from "../types";
 import {
-  loadUsers,
-  saveUsers,
-  loadExpenses,
-  saveExpenses,
-  loadSettlements,
-  saveSettlements,
   loadCategoryConfigs,
   saveCategoryConfigs,
   loadCustomCategories,
   saveCustomCategories,
 } from "../utils/storage";
-import { USER_COLORS } from "../constants/colors";
+import { supabase } from "../services/supabase";
+import { useAuth } from "./AuthContext";
+import { useHousehold } from "./HouseholdContext";
 
 // ---------------------------------------------------------------------------
 // Default categories (used when none are stored yet)
@@ -39,7 +36,6 @@ export const DEFAULT_CATEGORIES: CustomCategory[] = [
 // ---------------------------------------------------------------------------
 
 interface AppState {
-  users: User[];
   expenses: Expense[];
   settlements: Settlement[];
   categoryConfigs: CategoryConfig[];
@@ -48,7 +44,6 @@ interface AppState {
 }
 
 const initialState: AppState = {
-  users: [],
   expenses: [],
   settlements: [],
   categoryConfigs: [],
@@ -61,10 +56,9 @@ const initialState: AppState = {
 // ---------------------------------------------------------------------------
 
 type Action =
-  | { type: "LOAD"; payload: { users: User[]; expenses: Expense[]; settlements: Settlement[]; categoryConfigs: CategoryConfig[]; customCategories: CustomCategory[] } }
-  | { type: "ADD_USER"; payload: User }
-  | { type: "UPDATE_USER"; payload: User }
-  | { type: "DELETE_USER"; payload: string }
+  | { type: "LOAD"; payload: { expenses: Expense[]; settlements: Settlement[]; categoryConfigs: CategoryConfig[]; customCategories: CustomCategory[] } }
+  | { type: "SET_EXPENSES"; payload: Expense[] }
+  | { type: "SET_SETTLEMENTS"; payload: Settlement[] }
   | { type: "ADD_EXPENSE"; payload: Expense }
   | { type: "UPDATE_EXPENSE"; payload: Expense }
   | { type: "DELETE_EXPENSE"; payload: string }
@@ -79,20 +73,10 @@ function reducer(state: AppState, action: Action): AppState {
     case "LOAD":
       return { ...action.payload, loaded: true };
 
-    case "ADD_USER":
-      return { ...state, users: [...state.users, action.payload] };
-    case "UPDATE_USER":
-      return {
-        ...state,
-        users: state.users.map((u) =>
-          u.id === action.payload.id ? action.payload : u
-        ),
-      };
-    case "DELETE_USER":
-      return {
-        ...state,
-        users: state.users.filter((u) => u.id !== action.payload),
-      };
+    case "SET_EXPENSES":
+      return { ...state, expenses: action.payload };
+    case "SET_SETTLEMENTS":
+      return { ...state, settlements: action.payload };
 
     case "ADD_EXPENSE":
       return { ...state, expenses: [action.payload, ...state.expenses] };
@@ -120,7 +104,7 @@ function reducer(state: AppState, action: Action): AppState {
         settlements: state.settlements.filter((s) => s.id !== action.payload),
       };
 
-    case "UPDATE_CATEGORY_CONFIG":
+    case "UPDATE_CATEGORY_CONFIG": {
       const existing = state.categoryConfigs.find(
         (c) => c.category === action.payload.category
       );
@@ -137,6 +121,7 @@ function reducer(state: AppState, action: Action): AppState {
           categoryConfigs: [...state.categoryConfigs, action.payload],
         };
       }
+    }
 
     case "ADD_CATEGORY":
       if (state.customCategories.find((c) => c.id === action.payload.id)) {
@@ -161,14 +146,39 @@ function reducer(state: AppState, action: Action): AppState {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers: map Supabase rows ↔ local Expense / Settlement
+// ---------------------------------------------------------------------------
+
+function rowToExpense(row: Record<string, unknown>): Expense {
+  return {
+    id: row.id as string,
+    description: (row.description as string) ?? "",
+    amount: Number(row.amount),
+    date: row.date as string,
+    paidBy: row.paid_by as string,
+    category: (row.category as string) ?? "Other",
+    splits: (row.split_ratio as SplitEntry[] | null) ?? null,
+    note: (row.note as string | undefined) ?? undefined,
+  };
+}
+
+function rowToSettlement(row: Record<string, unknown>): Settlement {
+  return {
+    id: row.id as string,
+    fromUserId: row.from_user_id as string,
+    toUserId: row.to_user_id as string,
+    amount: Number(row.amount),
+    date: row.date as string,
+    note: (row.note as string | undefined) ?? undefined,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Context
 // ---------------------------------------------------------------------------
 
 interface AppContextValue {
   state: AppState;
-  addUser: (user: Omit<User, "id">) => void;
-  updateUser: (user: User) => void;
-  deleteUser: (id: string) => void;
   addExpense: (expense: Omit<Expense, "id">) => void;
   updateExpense: (expense: Expense) => void;
   deleteExpense: (id: string) => void;
@@ -186,30 +196,23 @@ const AppContext = createContext<AppContextValue | null>(null);
 // Provider
 // ---------------------------------------------------------------------------
 
-
-function uuid(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
+  const { session } = useAuth();
+  const { household } = useHousehold();
 
-  // Load persisted data on mount.
+  // Load categories from local storage on mount.
   useEffect(() => {
     (async () => {
-      const [users, expenses, settlements, categoryConfigs, customCategories] = await Promise.all([
-        loadUsers(),
-        loadExpenses(),
-        loadSettlements(),
+      const [categoryConfigs, customCategories] = await Promise.all([
         loadCategoryConfigs(),
         loadCustomCategories(),
       ]);
       dispatch({
         type: "LOAD",
         payload: {
-          users,
-          expenses,
-          settlements,
+          expenses: [],
+          settlements: [],
           categoryConfigs,
           customCategories: customCategories.length > 0 ? customCategories : DEFAULT_CATEGORIES,
         },
@@ -217,52 +220,212 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     })();
   }, []);
 
-  // Persist whenever state changes (after initial load).
+  // Persist categories whenever they change.
   useEffect(() => {
     if (!state.loaded) return;
-    saveUsers(state.users);
-    saveExpenses(state.expenses);
-    saveSettlements(state.settlements);
     saveCategoryConfigs(state.categoryConfigs);
     saveCustomCategories(state.customCategories);
-  }, [state.users, state.expenses, state.settlements, state.categoryConfigs, state.customCategories, state.loaded]);
+  }, [state.categoryConfigs, state.customCategories, state.loaded]);
 
-  const addUser = useCallback((user: Omit<User, "id">) => {
-    const nextColor =
-      USER_COLORS[state.users.length % USER_COLORS.length];
-    dispatch({
-      type: "ADD_USER",
-      payload: { ...user, id: uuid(), color: user.color || nextColor },
-    });
-  }, [state.users.length]);
+  // Load expenses & settlements from Supabase whenever household changes.
+  useEffect(() => {
+    if (!household?.id) {
+      dispatch({ type: "SET_EXPENSES", payload: [] });
+      dispatch({ type: "SET_SETTLEMENTS", payload: [] });
+      return;
+    }
 
-  const updateUser = useCallback((user: User) => {
-    dispatch({ type: "UPDATE_USER", payload: user });
-  }, []);
+    (async () => {
+      const [expRows, setRows] = await Promise.all([
+        supabase
+          .from("expenses")
+          .select("*")
+          .eq("household_id", household.id)
+          .order("date", { ascending: false }),
+        supabase
+          .from("settlements")
+          .select("*")
+          .eq("household_id", household.id)
+          .order("date", { ascending: false }),
+      ]);
 
-  const deleteUser = useCallback((id: string) => {
-    dispatch({ type: "DELETE_USER", payload: id });
-  }, []);
+      dispatch({
+        type: "SET_EXPENSES",
+        payload: (expRows.data ?? []).map(rowToExpense),
+      });
+      dispatch({
+        type: "SET_SETTLEMENTS",
+        payload: (setRows.data ?? []).map(rowToSettlement),
+      });
+    })();
+  }, [household?.id]);
 
-  const addExpense = useCallback((expense: Omit<Expense, "id">) => {
-    dispatch({ type: "ADD_EXPENSE", payload: { ...expense, id: uuid() } });
-  }, []);
+  // Supabase Realtime: subscribe to expense & settlement changes.
+  useEffect(() => {
+    if (!household?.id) return;
 
-  const updateExpense = useCallback((expense: Expense) => {
-    dispatch({ type: "UPDATE_EXPENSE", payload: expense });
-  }, []);
+    const channel = supabase
+      .channel(`app_data:${household.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "expenses",
+          filter: `household_id=eq.${household.id}`,
+        },
+        async () => {
+          const { data } = await supabase
+            .from("expenses")
+            .select("*")
+            .eq("household_id", household.id)
+            .order("date", { ascending: false });
+          dispatch({
+            type: "SET_EXPENSES",
+            payload: (data ?? []).map(rowToExpense),
+          });
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "settlements",
+          filter: `household_id=eq.${household.id}`,
+        },
+        async () => {
+          const { data } = await supabase
+            .from("settlements")
+            .select("*")
+            .eq("household_id", household.id)
+            .order("date", { ascending: false });
+          dispatch({
+            type: "SET_SETTLEMENTS",
+            payload: (data ?? []).map(rowToSettlement),
+          });
+        }
+      )
+      .subscribe();
 
-  const deleteExpense = useCallback((id: string) => {
-    dispatch({ type: "DELETE_EXPENSE", payload: id });
-  }, []);
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [household?.id]);
 
-  const addSettlement = useCallback((settlement: Omit<Settlement, "id">) => {
-    dispatch({ type: "ADD_SETTLEMENT", payload: { ...settlement, id: uuid() } });
-  }, []);
+  // ── Mutations ─────────────────────────────────────────────────────────────
 
-  const deleteSettlement = useCallback((id: string) => {
-    dispatch({ type: "DELETE_SETTLEMENT", payload: id });
-  }, []);
+  const addExpense = useCallback(
+    (expense: Omit<Expense, "id">) => {
+      if (!household?.id || !session?.user.id) return;
+      // Optimistic update
+      const tempId = `tmp-${Date.now()}`;
+      dispatch({ type: "ADD_EXPENSE", payload: { ...expense, id: tempId } });
+
+      supabase
+        .from("expenses")
+        .insert({
+          household_id: household.id,
+          paid_by: expense.paidBy,
+          amount: expense.amount,
+          description: expense.description,
+          date: expense.date.substring(0, 10),
+          category: expense.category,
+          note: expense.note ?? null,
+          split_ratio: expense.splits ?? null,
+        })
+        .then(({ error }) => {
+          if (error) {
+            // Roll back optimistic update on error.
+            dispatch({ type: "DELETE_EXPENSE", payload: tempId });
+            queueWrite({ type: "ADD_EXPENSE", payload: expense, householdId: household.id });
+          }
+        });
+    },
+    [household?.id, session?.user.id]
+  );
+
+  const updateExpense = useCallback(
+    (expense: Expense) => {
+      if (!household?.id) return;
+      dispatch({ type: "UPDATE_EXPENSE", payload: expense });
+
+      supabase
+        .from("expenses")
+        .update({
+          paid_by: expense.paidBy,
+          amount: expense.amount,
+          description: expense.description,
+          date: expense.date.substring(0, 10),
+          category: expense.category,
+          note: expense.note ?? null,
+          split_ratio: expense.splits ?? null,
+        })
+        .eq("id", expense.id)
+        .then(({ error }) => {
+          if (error) queueWrite({ type: "UPDATE_EXPENSE", payload: expense, householdId: household.id });
+        });
+    },
+    [household?.id]
+  );
+
+  const deleteExpense = useCallback(
+    (id: string) => {
+      if (!household?.id) return;
+      dispatch({ type: "DELETE_EXPENSE", payload: id });
+
+      supabase
+        .from("expenses")
+        .delete()
+        .eq("id", id)
+        .then(({ error }) => {
+          if (error) queueWrite({ type: "DELETE_EXPENSE", payload: id, householdId: household.id });
+        });
+    },
+    [household?.id]
+  );
+
+  const addSettlement = useCallback(
+    (settlement: Omit<Settlement, "id">) => {
+      if (!household?.id || !session?.user.id) return;
+      const tempId = `tmp-${Date.now()}`;
+      dispatch({ type: "ADD_SETTLEMENT", payload: { ...settlement, id: tempId } });
+
+      supabase
+        .from("settlements")
+        .insert({
+          household_id: household.id,
+          from_user_id: settlement.fromUserId,
+          to_user_id: settlement.toUserId,
+          amount: settlement.amount,
+          date: settlement.date.substring(0, 10),
+          note: settlement.note ?? null,
+        })
+        .then(({ error }) => {
+          if (error) {
+            dispatch({ type: "DELETE_SETTLEMENT", payload: tempId });
+            queueWrite({ type: "ADD_SETTLEMENT", payload: settlement, householdId: household.id });
+          }
+        });
+    },
+    [household?.id, session?.user.id]
+  );
+
+  const deleteSettlement = useCallback(
+    (id: string) => {
+      if (!household?.id) return;
+      dispatch({ type: "DELETE_SETTLEMENT", payload: id });
+
+      supabase
+        .from("settlements")
+        .delete()
+        .eq("id", id)
+        .then(({ error }) => {
+          if (error) queueWrite({ type: "DELETE_SETTLEMENT", payload: id, householdId: household.id });
+        });
+    },
+    [household?.id]
+  );
 
   const updateCategoryConfig = useCallback((config: CategoryConfig) => {
     dispatch({ type: "UPDATE_CATEGORY_CONFIG", payload: config });
@@ -285,9 +448,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     <AppContext.Provider
       value={{
         state,
-        addUser,
-        updateUser,
-        deleteUser,
         addExpense,
         updateExpense,
         deleteExpense,
@@ -309,3 +469,24 @@ export function useApp(): AppContextValue {
   if (!ctx) throw new Error("useApp must be used within AppProvider");
   return ctx;
 }
+
+// ---------------------------------------------------------------------------
+// Offline write queue helpers (simple AsyncStorage-based queue)
+// ---------------------------------------------------------------------------
+type QueuedWrite = {
+  type: string;
+  payload: unknown;
+  householdId: string;
+};
+
+function queueWrite(item: QueuedWrite) {
+  const key = "@family_expenses:write_queue";
+  AsyncStorage.getItem(key).then((raw) => {
+    const queue: QueuedWrite[] = raw ? JSON.parse(raw) : [];
+    queue.push(item);
+    AsyncStorage.setItem(key, JSON.stringify(queue));
+  });
+}
+
+
+

@@ -9,6 +9,7 @@ import {
   View,
 } from "react-native";
 import { useApp } from "../../context/AppContext";
+import { useHousehold } from "../../context/HouseholdContext";
 import { SplitEntry } from "../../types";
 import {
   SplitMode,
@@ -20,7 +21,8 @@ const EMOJI_OPTIONS = ["🛒","💡","🏠","🚗","🍽️","💊","🎬","📦
 
 export default function SettingsScreen() {
   const { state, getCategoryConfig, updateCategoryConfig, addCategory, deleteCategory } = useApp();
-  const { users, customCategories } = state;
+  const { members: users } = useHousehold();
+  const { customCategories } = state;
 
   // ── Category Management ──────────────────────────────────────────────────
   const [newCatName, setNewCatName] = useState("");
