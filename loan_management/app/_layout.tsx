@@ -4,6 +4,7 @@ import { setupNotifications } from "../utils/notifications";
 import { ApplicationProvider } from "../store/applicationStore";
 import { CacheProvider } from "../store/cacheStore";
 import { CollectionProvider } from "../store/collectionStore";
+import { MessageProvider } from "../store/messageStore";
 import { SettingsProvider } from "../store/settingsStore";
 
 export default function RootLayout() {
@@ -16,17 +17,19 @@ export default function RootLayout() {
       <CacheProvider>
         <CollectionProvider>
           <ApplicationProvider>
-            <Stack screenOptions={{ headerShown: false }}>
-              <Stack.Screen name="(tabs)" />
-              <Stack.Screen
-                name="new-application"
-                options={{
-                  presentation: "fullScreenModal",
-                  animation: "slide_from_bottom",
-                  headerShown: false,
-                }}
-              />
-            </Stack>
+            <MessageProvider>
+              <Stack screenOptions={{ headerShown: false }}>
+                <Stack.Screen name="(tabs)" />
+                <Stack.Screen
+                  name="new-application"
+                  options={{
+                    presentation: "fullScreenModal",
+                    animation: "slide_from_bottom",
+                    headerShown: false,
+                  }}
+                />
+              </Stack>
+            </MessageProvider>
           </ApplicationProvider>
         </CollectionProvider>
       </CacheProvider>

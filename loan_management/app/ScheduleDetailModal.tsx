@@ -20,15 +20,18 @@ import {
   cancelOpenLines,
   changeScheduleLineState,
   fetchScheduleLinesById,
+  postMessageToOdoo,
   setScheduleManualStatus,
   updateSchedule,
   updateScheduleLine,
 } from "../services/loanApi";
 import {
   buildPaidLineSms,
+  buildReminderLineSms,
   fetchPartnerPhone,
   sendSms,
 } from "../services/twilioSms";
+import { useMessages } from "../store/messageStore";
 import { useSettings } from "../store/settingsStore";
 import { LoanSchedule, LoanScheduleLine, ScheduleLineState } from "../types/odoo";
 import { DatePickerInput } from "../components/DatePickerInput";
@@ -642,6 +645,245 @@ function StatusPickerSheet({
   );
 }
 
+// ── Line Message Modal (Acknowledgement + Reminder tabs) ─────────────────────
+
+type LineMessageTab = "acknowledgement" | "reminder";
+
+function LineMessageModal({
+  visible,
+  line,
+  schedule,
+  allLines,
+  currency,
+  onClose,
+  onSent,
+}: {
+  visible: boolean;
+  line: LoanScheduleLine | null;
+  schedule: LoanSchedule | null;
+  allLines: LoanScheduleLine[];
+  currency: string;
+  onClose: () => void;
+  onSent: (recipientName: string, recipientPhone: string, message: string, tab: LineMessageTab) => void;
+}) {
+  const { settings } = useSettings();
+  const partnerName = schedule && Array.isArray(schedule.partner_id) ? schedule.partner_id[1] : "Customer";
+
+  const nextLine = useMemo(() => {
+    if (!line) return null;
+    return allLines
+      .filter((l) => l.state === "unpaid" && l.payment_date > line.payment_date)
+      .sort((a, b) => a.payment_date.localeCompare(b.payment_date))[0] ?? null;
+  }, [line, allLines]);
+
+  const ackDefault = useMemo(() => {
+    if (!line) return "";
+    const paidDate = line.paid_date || line.payment_date;
+    let msg = `Dear ${partnerName}, we have received your payment of ${formatMoney(line.expected_amount, currency)} on ${formatDateLabel(paidDate)}.`;
+    if (nextLine) {
+      msg += ` We look forward to your next payment on ${formatDateLabel(nextLine.payment_date)}.`;
+    }
+    msg += " Thank you!";
+    return msg;
+  }, [line, partnerName, currency, nextLine]);
+
+  const reminderDefault = useMemo(() => {
+    if (!line) return "";
+    return buildReminderLineSms(partnerName, line.expected_amount, line.payment_date, currency);
+  }, [line, partnerName, currency]);
+
+  const [tab, setTab] = useState<LineMessageTab>("acknowledgement");
+  const [ackMessage, setAckMessage] = useState("");
+  const [reminderMessage, setReminderMessage] = useState("");
+  const [phone, setPhone] = useState("");
+  const [loadingPhone, setLoadingPhone] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [sendResult, setSendResult] = useState<"sent" | "failed" | null>(null);
+  const [failReason, setFailReason] = useState<string | null>(null);
+  const initialized = React.useRef(false);
+
+  useEffect(() => {
+    if (!visible || !line || !schedule) return;
+    if (initialized.current) return;
+    initialized.current = true;
+    setTab("acknowledgement");
+    setAckMessage(ackDefault);
+    setReminderMessage(reminderDefault);
+    setPhone("");
+    setError(null);
+    setSendResult(null);
+    setFailReason(null);
+
+    if (!settings.smsEnabled || !settings.twilioAccountSid || !settings.twilioAuthToken || !settings.twilioFromNumber) {
+      setError("SMS not configured. Enable Twilio SMS in Settings.");
+      return;
+    }
+
+    const partnerId = Array.isArray(schedule.partner_id) ? schedule.partner_id[0] : null;
+    if (!partnerId) return;
+    setLoadingPhone(true);
+    (async () => {
+      try {
+        const uid = await authenticate(settings);
+        const fetchedPhone = await fetchPartnerPhone(settings, uid, partnerId);
+        setPhone(fetchedPhone ?? "");
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setLoadingPhone(false);
+      }
+    })();
+  }, [visible, line, schedule, settings, ackDefault, reminderDefault]);
+
+  const handleClose = () => {
+    initialized.current = false;
+    setSendResult(null);
+    onClose();
+  };
+
+  const activeMessage = tab === "acknowledgement" ? ackMessage : reminderMessage;
+  const setActiveMessage = tab === "acknowledgement" ? setAckMessage : setReminderMessage;
+
+  const handleSend = async () => {
+    if (!phone.trim()) { setError("Enter a recipient phone number."); return; }
+    if (!activeMessage.trim()) { setError("Message cannot be empty."); return; }
+    setError(null);
+    setSending(true);
+    setSendResult(null);
+    setFailReason(null);
+    try {
+      await sendSms(
+        settings.twilioAccountSid,
+        settings.twilioAuthToken,
+        settings.twilioFromNumber,
+        phone.trim(),
+        activeMessage.trim()
+      );
+      setSendResult("sent");
+      onSent(partnerName, phone.trim(), activeMessage.trim(), tab);
+    } catch (e: unknown) {
+      setSendResult("failed");
+      setFailReason(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
+      <KeyboardAvoidingView
+        style={{ flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.45)" }}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <View style={lineMsgSheet.container}>
+          <View style={lineMsgSheet.handle} />
+          <View style={lineMsgSheet.titleRow}>
+            <Text style={lineMsgSheet.title}>Send Message</Text>
+            {line ? (
+              <Text style={lineMsgSheet.subtitle}>
+                {formatDateLabel(line.payment_date)} · {formatMoney(line.expected_amount, currency)}
+              </Text>
+            ) : null}
+          </View>
+
+          {/* Tabs */}
+          <View style={lineMsgSheet.tabs}>
+            {(["acknowledgement", "reminder"] as LineMessageTab[]).map((t) => (
+              <TouchableOpacity
+                key={t}
+                style={[lineMsgSheet.tab, tab === t && lineMsgSheet.tabActive]}
+                onPress={() => { setTab(t); setSendResult(null); setError(null); }}
+              >
+                <Text style={[lineMsgSheet.tabText, tab === t && lineMsgSheet.tabTextActive]}>
+                  {t === "acknowledgement" ? "Acknowledgement" : "Reminder"}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: 400 }}>
+            <View style={{ gap: 12, paddingBottom: 8 }}>
+              {loadingPhone ? (
+                <View style={lineMsgSheet.infoRow}>
+                  <ActivityIndicator size="small" color="#2563EB" />
+                  <Text style={lineMsgSheet.infoText}>Looking up phone…</Text>
+                </View>
+              ) : null}
+              {error ? (
+                <View style={lineMsgSheet.errorRow}>
+                  <Ionicons name="alert-circle-outline" size={15} color="#B91C1C" />
+                  <Text style={lineMsgSheet.errorText}>{error}</Text>
+                </View>
+              ) : null}
+              {sendResult === "sent" ? (
+                <View style={lineMsgSheet.sentRow}>
+                  <Ionicons name="checkmark-circle" size={17} color="#166534" />
+                  <Text style={lineMsgSheet.sentText}>Sent successfully!</Text>
+                </View>
+              ) : null}
+              {sendResult === "failed" ? (
+                <View style={lineMsgSheet.errorRow}>
+                  <Ionicons name="close-circle-outline" size={15} color="#B91C1C" />
+                  <View>
+                    <Text style={lineMsgSheet.errorText}>Failed to send</Text>
+                    {failReason ? <Text style={[lineMsgSheet.errorText, { fontSize: 12 }]}>{failReason}</Text> : null}
+                  </View>
+                </View>
+              ) : null}
+              <View>
+                <Text style={lineMsgSheet.label}>Recipient Phone</Text>
+                <TextInput
+                  style={lineMsgSheet.input}
+                  value={phone}
+                  onChangeText={setPhone}
+                  placeholder="+256700000000"
+                  keyboardType="phone-pad"
+                  autoCapitalize="none"
+                />
+              </View>
+              <View>
+                <Text style={lineMsgSheet.label}>Message (tap to edit)</Text>
+                <TextInput
+                  style={[lineMsgSheet.input, lineMsgSheet.inputMulti]}
+                  value={activeMessage}
+                  onChangeText={setActiveMessage}
+                  multiline
+                  numberOfLines={5}
+                  textAlignVertical="top"
+                />
+                <Text style={lineMsgSheet.charCount}>{activeMessage.length} chars</Text>
+              </View>
+            </View>
+          </ScrollView>
+
+          <View style={lineMsgSheet.actions}>
+            <TouchableOpacity style={lineMsgSheet.cancelBtn} onPress={handleClose}>
+              <Text style={lineMsgSheet.cancelText}>{sendResult === "sent" ? "Done" : "Cancel"}</Text>
+            </TouchableOpacity>
+            {sendResult !== "sent" ? (
+              <TouchableOpacity
+                style={[lineMsgSheet.sendBtn, (sending || !!error) && { opacity: 0.6 }]}
+                onPress={handleSend}
+                disabled={sending || !!error}
+              >
+                {sending ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Ionicons name="send-outline" size={15} color="#FFFFFF" />
+                    <Text style={lineMsgSheet.sendText}>Send</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
 // ── Line Row ──────────────────────────────────────────────────────────────────
 
 function LineRow({
@@ -649,12 +891,14 @@ function LineRow({
   currency,
   onEdit,
   onChangeState,
+  onSendMessage,
   busy,
 }: {
   line: LoanScheduleLine;
   currency: string;
   onEdit: (line: LoanScheduleLine) => void;
   onChangeState: (line: LoanScheduleLine, action: "action_mark_paid" | "action_mark_unpaid" | "action_mark_missed" | "action_mark_canceled") => void;
+  onSendMessage: (line: LoanScheduleLine) => void;
   busy: boolean;
 }) {
   const badge = getLineStateBadge(line.state);
@@ -711,6 +955,14 @@ function LineRow({
               <Text style={lineRow.editText}>Edit Date / Amount</Text>
             </TouchableOpacity>
           )}
+          <TouchableOpacity
+            style={[lineRow.editBtn, { backgroundColor: "#F0FDFA", borderColor: "#99F6E4" }]}
+            onPress={() => onSendMessage(line)}
+            disabled={busy}
+          >
+            <Ionicons name="chatbubble-ellipses-outline" size={14} color="#0F766E" />
+            <Text style={[lineRow.editText, { color: "#0F766E" }]}>Send Message</Text>
+          </TouchableOpacity>
           <View style={lineRow.stateButtons}>
             {stateActions.map((sa) => (
               <TouchableOpacity
@@ -740,6 +992,7 @@ interface Props {
 
 export function ScheduleDetailModal({ visible, schedule, onClose, onUpdated }: Props) {
   const { settings } = useSettings();
+  const { addMessage } = useMessages();
   const currency = settings.defaultCurrency || "UGX";
 
   const [lines, setLines] = useState<LoanScheduleLine[]>([]);
@@ -752,6 +1005,7 @@ export function ScheduleDetailModal({ visible, schedule, onClose, onUpdated }: P
   const [showEditSchedule, setShowEditSchedule] = useState(false);
   const [showReschedule, setShowReschedule] = useState(false);
   const [localSchedule, setLocalSchedule] = useState<LoanSchedule | null>(null);
+  const [lineMessageTarget, setLineMessageTarget] = useState<LoanScheduleLine | null>(null);
 
   // SMS state for post-mark-paid acknowledgment
   const [smsModal, setSmsModal] = useState<{
@@ -971,6 +1225,34 @@ export function ScheduleDetailModal({ visible, schedule, onClose, onUpdated }: P
 
   if (!schedule) return null;
 
+  const handleLineMessageSent = async (
+    recipientName: string,
+    recipientPhone: string,
+    messageContent: string,
+    tab: "acknowledgement" | "reminder"
+  ) => {
+    const invoiceId = Array.isArray(schedule.invoice_id) ? schedule.invoice_id[0] : null;
+    await addMessage({
+      invoiceId,
+      invoiceName: Array.isArray(schedule.invoice_id) ? schedule.invoice_id[1] : null,
+      scheduleLineId: lineMessageTarget?.id ?? null,
+      recipientName,
+      recipientPhone,
+      messageContent,
+      messageType: tab,
+      deliveryStatus: "sent",
+      twilioSid: null,
+      errorMessage: null,
+    });
+    // Log to Odoo chatter (best-effort)
+    if (invoiceId) {
+      try {
+        const uid = await authenticate(settings);
+        await postMessageToOdoo(settings, uid, invoiceId, `[SMS ${tab} to ${recipientPhone}] ${messageContent}`);
+      } catch { /* ignore chatter errors */ }
+    }
+  };
+
   const handleSmsSend = async () => {
     if (!smsModal) return;
     setSmsModal((prev) => prev ? { ...prev, sending: true, result: null, error: null } : null);
@@ -983,6 +1265,14 @@ export function ScheduleDetailModal({ visible, schedule, onClose, onUpdated }: P
         smsModal.message.trim()
       );
       setSmsModal((prev) => prev ? { ...prev, sending: false, result: "sent" } : null);
+      // Log auto-sent post-mark-paid SMS to Odoo chatter
+      const invoiceId = Array.isArray(schedule.invoice_id) ? schedule.invoice_id[0] : null;
+      if (invoiceId) {
+        try {
+          const uid = await authenticate(settings);
+          await postMessageToOdoo(settings, uid, invoiceId, `[SMS acknowledgement to ${smsModal.phone.trim()}] ${smsModal.message.trim()}`);
+        } catch { /* ignore chatter errors */ }
+      }
     } catch (e: unknown) {
       setSmsModal((prev) => prev ? { ...prev, sending: false, result: "failed", error: e instanceof Error ? e.message : String(e) } : null);
     }
@@ -1026,6 +1316,16 @@ export function ScheduleDetailModal({ visible, schedule, onClose, onUpdated }: P
         current={currentStatus}
         onClose={() => setShowStatusPicker(false)}
         onSelect={handleSetStatus}
+      />
+      {/* Payment line message modal (Acknowledgement + Reminder) */}
+      <LineMessageModal
+        visible={!!lineMessageTarget}
+        line={lineMessageTarget}
+        schedule={localSchedule}
+        allLines={lines}
+        currency={currency}
+        onClose={() => setLineMessageTarget(null)}
+        onSent={handleLineMessageSent}
       />
       {/* Payment receipt SMS modal */}
       <Modal
@@ -1225,6 +1525,7 @@ export function ScheduleDetailModal({ visible, schedule, onClose, onUpdated }: P
                 currency={currency}
                 onEdit={(l) => setEditingLine(l)}
                 onChangeState={handleChangeState}
+                onSendMessage={(l) => setLineMessageTarget(l)}
                 busy={busyLineId === line.id}
               />
             ))}
@@ -1818,4 +2119,57 @@ const smsSheet = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 15,
   },
+});
+
+const lineMsgSheet = StyleSheet.create({
+  container: {
+    backgroundColor: "#FFFFFF",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    paddingBottom: Platform.OS === "ios" ? 36 : 24,
+    gap: 12,
+  },
+  handle: {
+    width: 40,
+    height: 4,
+    backgroundColor: "#D1D5DB",
+    borderRadius: 2,
+    alignSelf: "center",
+    marginBottom: 4,
+  },
+  titleRow: { gap: 2 },
+  title: { fontSize: 17, fontWeight: "700", color: "#111827" },
+  subtitle: { fontSize: 13, color: "#6B7280" },
+  tabs: {
+    flexDirection: "row",
+    borderRadius: 10,
+    backgroundColor: "#F3F4F6",
+    padding: 3,
+    gap: 3,
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 7,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  tabActive: { backgroundColor: "#FFFFFF", shadowColor: "#000", shadowOpacity: 0.08, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 2 },
+  tabText: { fontSize: 13, fontWeight: "600", color: "#6B7280" },
+  tabTextActive: { color: "#111827" },
+  infoRow: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#EFF6FF", borderRadius: 8, padding: 10 },
+  infoText: { fontSize: 13, color: "#2563EB" },
+  errorRow: { flexDirection: "row", alignItems: "flex-start", gap: 8, backgroundColor: "#FEF2F2", borderRadius: 8, padding: 10, borderWidth: 1, borderColor: "#FECACA" },
+  errorText: { flex: 1, fontSize: 13, color: "#B91C1C" },
+  sentRow: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#F0FDF4", borderRadius: 8, padding: 10, borderWidth: 1, borderColor: "#BBF7D0" },
+  sentText: { fontSize: 13, color: "#166534", fontWeight: "700" },
+  label: { fontSize: 12, fontWeight: "600", color: "#374151", marginBottom: 4 },
+  input: { borderWidth: 1, borderColor: "#D1D5DB", borderRadius: 10, padding: 11, fontSize: 14, backgroundColor: "#F9FAFB", color: "#111827" },
+  inputMulti: { minHeight: 110, textAlignVertical: "top", lineHeight: 20 },
+  charCount: { fontSize: 11, color: "#9CA3AF", textAlign: "right", marginTop: 3 },
+  actions: { flexDirection: "row", gap: 10, marginTop: 4 },
+  cancelBtn: { flex: 1, backgroundColor: "#F3F4F6", borderRadius: 10, padding: 13, alignItems: "center" },
+  cancelText: { fontWeight: "700", color: "#374151", fontSize: 14 },
+  sendBtn: { flex: 2, backgroundColor: "#0F766E", borderRadius: 10, padding: 13, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 6 },
+  sendText: { fontWeight: "700", color: "#FFFFFF", fontSize: 14 },
 });

@@ -6,13 +6,18 @@ import { formatMoney, formatDateLabel } from "../utils/format";
 // ── Low-level Twilio REST call ────────────────────────────────────────────────
 // Uses btoa (available globally in React Native 0.64+ / Expo 44+)
 
+export interface TwilioSendResult {
+  sid: string;
+  status: string;
+}
+
 export async function sendSms(
   accountSid: string,
   authToken: string,
   fromNumber: string,
   toNumber: string,
   body: string
-): Promise<void> {
+): Promise<TwilioSendResult> {
   const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
 
   const credentials = btoa(`${accountSid}:${authToken}`);
@@ -39,6 +44,13 @@ export async function sendSms(
       message = err.message || message;
     } catch { /* ignore parse errors */ }
     throw new Error(`Twilio: ${message}`);
+  }
+
+  try {
+    const result = await response.json() as { sid?: string; status?: string };
+    return { sid: result.sid ?? "", status: result.status ?? "sent" };
+  } catch {
+    return { sid: "", status: "sent" };
   }
 }
 
@@ -115,6 +127,20 @@ export function buildPaymentSms(item: LocalCollection, schedule: LoanSchedule): 
 }
 
 // ── Payment line SMS builder (from ScheduleDetailModal mark-paid) ─────────────
+
+/**
+ * Builds a reminder SMS for a schedule line that is due or overdue.
+ */
+export function buildReminderLineSms(
+  partnerName: string,
+  dueAmount: number,
+  dueDate: string,
+  currency: string
+): string {
+  const amountFormatted = formatMoney(dueAmount, currency);
+  const dateFormatted = formatDateLabel(dueDate);
+  return `Dear ${partnerName}, this is a reminder that your payment of ${amountFormatted} is due on ${dateFormatted}. Please make your payment on time. Thank you!`;
+}
 
 /**
  * Builds an acknowledgment/receipt SMS for a schedule line that was just marked

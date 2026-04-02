@@ -224,6 +224,19 @@ export async function markScheduleLinePaid(
   );
 }
 
+export async function postMessageToOdoo(
+  settings: OdooSettings,
+  uid: number,
+  invoiceId: number,
+  body: string
+): Promise<void> {
+  await callKw<number>(settings, uid, "account.move", "message_post", [[invoiceId]], {
+    body,
+    message_type: "comment",
+    subtype_xmlid: "mail.mt_note",
+  });
+}
+
 export async function createLoanApplication(
   settings: OdooSettings,
   uid: number,
