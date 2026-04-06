@@ -41,8 +41,11 @@ function displayM2O(val: Many2OneValue, fallback = "-"): string {
   return Array.isArray(val) ? val[1] : fallback;
 }
 
-function timeLabel(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+function dateTimeLabel(iso: string): string {
+  const d = new Date(iso);
+  const date = d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return `${date} · ${time}`;
 }
 
 // ── Summary pill ─────────────────────────────────────────────────────────────
@@ -386,7 +389,7 @@ function CollectionCard({
         </View>
         <View style={styles.cardMetaItem}>
           <Ionicons name="time-outline" size={12} color="#6B7280" />
-          <Text style={styles.cardMetaText}>Logged {timeLabel(item.createdAt)}</Text>
+          <Text style={styles.cardMetaText}>Logged {dateTimeLabel(item.createdAt)}</Text>
         </View>
       </View>
 
@@ -412,7 +415,7 @@ function CollectionCard({
           <View style={styles.recordedRow}>
             <Ionicons name="checkmark-circle" size={16} color="#166534" />
             <Text style={styles.recordedText}>
-              Recorded to Odoo · {item.recordedAt ? timeLabel(item.recordedAt) : ""}
+              Recorded to Odoo · {item.recordedAt ? dateTimeLabel(item.recordedAt) : ""}
             </Text>
           </View>
           <View style={styles.recordedActions}>

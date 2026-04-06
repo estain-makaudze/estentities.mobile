@@ -1,6 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -32,32 +31,12 @@ import {
   sendSms,
 } from "../services/twilioSms";
 import { useMessages } from "../store/messageStore";
+import { useCache } from "../store/cacheStore";
 import { useSettings } from "../store/settingsStore";
 import { LoanSchedule, LoanScheduleLine, ScheduleLineState } from "../types/odoo";
 import { DatePickerInput } from "../components/DatePickerInput";
 import { displayMany2One, formatDateLabel, formatMoney, humanizeStatus } from "../utils/format";
 
-// ── Line cache helpers ────────────────────────────────────────────────────────
-
-function lineCacheKey(scheduleId: number): string {
-  return `schedule_lines_v1_${scheduleId}`;
-}
-
-async function saveLinesCache(scheduleId: number, items: LoanScheduleLine[]): Promise<void> {
-  try {
-    await AsyncStorage.setItem(lineCacheKey(scheduleId), JSON.stringify(items));
-  } catch { /* ignore storage errors */ }
-}
-
-async function loadLinesCache(scheduleId: number): Promise<LoanScheduleLine[] | null> {
-  try {
-    const raw = await AsyncStorage.getItem(lineCacheKey(scheduleId));
-    if (!raw) return null;
-    return JSON.parse(raw) as LoanScheduleLine[];
-  } catch {
-    return null;
-  }
-}
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -392,12 +371,14 @@ function BulkRescheduleSheet({
   visible,
   currency,
   openLinesCount,
+  outstandingBalance,
   onClose,
   onReschedule,
 }: {
   visible: boolean;
   currency: string;
   openLinesCount: number;
+  outstandingBalance: number;
   onClose: () => void;
   onReschedule: (vals: {
     startDate: string;
@@ -426,14 +407,16 @@ function BulkRescheduleSheet({
     }
   }, [visible, openLinesCount]);
 
+  // Compute auto-amount when amount field is blank and installments is valid
+  const parsedInstallmentsPreview = parseInt(installments, 10);
+  const autoAmount =
+    !amount.trim() && outstandingBalance > 0 && parsedInstallmentsPreview > 0
+      ? outstandingBalance / parsedInstallmentsPreview
+      : null;
+
   const handleConfirm = async () => {
     if (!isValidDate(startDate)) {
       Alert.alert("Invalid Date", "Enter a valid start date (YYYY-MM-DD).");
-      return;
-    }
-    const parsedAmount = parseFloat(amount.replace(",", "."));
-    if (!parsedAmount || parsedAmount <= 0) {
-      Alert.alert("Invalid Amount", "Enter a positive amount per installment.");
       return;
     }
     const parsedInstallments = parseInt(installments, 10);
@@ -441,14 +424,29 @@ function BulkRescheduleSheet({
       Alert.alert("Invalid Installments", "Enter a number between 1 and 120.");
       return;
     }
+    // Resolve amount: explicit input OR auto-divide outstanding
+    let resolvedAmount: number;
+    if (amount.trim()) {
+      resolvedAmount = parseFloat(amount.replace(",", "."));
+      if (!resolvedAmount || resolvedAmount <= 0) {
+        Alert.alert("Invalid Amount", "Enter a positive amount per installment.");
+        return;
+      }
+    } else if (outstandingBalance > 0) {
+      resolvedAmount = outstandingBalance / parsedInstallments;
+    } else {
+      Alert.alert("Invalid Amount", "Enter an amount per installment or ensure there is an outstanding balance to divide.");
+      return;
+    }
     const parsedCustomDays = parseInt(customDays, 10);
     if (intervalType === "custom" && (!parsedCustomDays || parsedCustomDays <= 0)) {
       Alert.alert("Invalid Days", "Enter a positive number of days.");
       return;
     }
+    const amountDisplay = formatMoney(resolvedAmount, currency);
     Alert.alert(
       "Confirm Reschedule",
-      `This will cancel ${openLinesCount} open line(s) and create ${parsedInstallments} new payment line(s) starting ${startDate}.\n\nThis action cannot be undone.`,
+      `This will cancel ${openLinesCount} open line(s) and create ${parsedInstallments} new payment line(s) of ${amountDisplay} starting ${startDate}.\n\nThis action cannot be undone.`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -461,7 +459,7 @@ function BulkRescheduleSheet({
                 startDate,
                 intervalType,
                 customDays: parsedCustomDays || 30,
-                amount: parsedAmount,
+                amount: resolvedAmount,
                 installments: parsedInstallments,
                 note: note.trim() || `Rescheduled on ${todayIso()}`,
               });
@@ -491,6 +489,15 @@ function BulkRescheduleSheet({
             <Text style={sheet.subtitle}>
               {openLinesCount} open line(s) will be canceled and replaced with a new schedule below.
             </Text>
+
+            {outstandingBalance > 0 && (
+              <View style={reschedStyle.outstandingRow}>
+                <Ionicons name="wallet-outline" size={14} color="#0369A1" />
+                <Text style={reschedStyle.outstandingText}>
+                  Outstanding balance: <Text style={{ fontWeight: "700" }}>{formatMoney(outstandingBalance, currency)}</Text>
+                </Text>
+              </View>
+            )}
 
             <Text style={sheet.label}>New Start Date</Text>
             <DatePickerInput value={startDate} onChange={setStartDate} />
@@ -522,15 +529,6 @@ function BulkRescheduleSheet({
               </>
             )}
 
-            <Text style={sheet.label}>Amount per Installment ({currency})</Text>
-            <TextInput
-              style={sheet.input}
-              value={amount}
-              onChangeText={setAmount}
-              placeholder="0"
-              keyboardType="decimal-pad"
-            />
-
             <Text style={sheet.label}>Number of Installments</Text>
             <TextInput
               style={sheet.input}
@@ -539,6 +537,26 @@ function BulkRescheduleSheet({
               placeholder="1"
               keyboardType="number-pad"
             />
+
+            <Text style={sheet.label}>
+              Amount per Installment ({currency}){" "}
+              <Text style={{ fontWeight: "400", color: "#9CA3AF" }}>— leave blank to auto-divide</Text>
+            </Text>
+            <TextInput
+              style={sheet.input}
+              value={amount}
+              onChangeText={setAmount}
+              placeholder={autoAmount != null ? `Auto: ${formatMoney(autoAmount, currency)}` : "0"}
+              keyboardType="decimal-pad"
+            />
+            {autoAmount != null && !amount.trim() && (
+              <View style={reschedStyle.autoAmountRow}>
+                <Ionicons name="calculator-outline" size={13} color="#166534" />
+                <Text style={reschedStyle.autoAmountText}>
+                  {formatMoney(outstandingBalance, currency)} ÷ {parsedInstallmentsPreview} = {formatMoney(autoAmount, currency)} per installment
+                </Text>
+              </View>
+            )}
 
             <Text style={sheet.label}>Reschedule Note</Text>
             <TextInput
@@ -669,23 +687,12 @@ function LineMessageModal({
   const { settings } = useSettings();
   const partnerName = schedule && Array.isArray(schedule.partner_id) ? schedule.partner_id[1] : "Customer";
 
-  const nextLine = useMemo(() => {
-    if (!line) return null;
-    return allLines
-      .filter((l) => l.state === "unpaid" && l.payment_date > line.payment_date)
-      .sort((a, b) => a.payment_date.localeCompare(b.payment_date))[0] ?? null;
-  }, [line, allLines]);
-
   const ackDefault = useMemo(() => {
     if (!line) return "";
-    const paidDate = line.paid_date || line.payment_date;
-    let msg = `Dear ${partnerName}, we have received your payment of ${formatMoney(line.expected_amount, currency)} on ${formatDateLabel(paidDate)}.`;
-    if (nextLine) {
-      msg += ` We look forward to your next payment on ${formatDateLabel(nextLine.payment_date)}.`;
-    }
+    let msg = `Dear ${partnerName}, we have received your reschedule. We look forward to your payment of ${formatMoney(line.expected_amount, currency)} on ${formatDateLabel(line.payment_date)}.`;
     msg += " Thank you!";
     return msg;
-  }, [line, partnerName, currency, nextLine]);
+  }, [line, partnerName, currency]);
 
   const reminderDefault = useMemo(() => {
     if (!line) return "";
@@ -993,6 +1000,7 @@ interface Props {
 export function ScheduleDetailModal({ visible, schedule, onClose, onUpdated }: Props) {
   const { settings } = useSettings();
   const { addMessage } = useMessages();
+  const { allLines, updateScheduleLines } = useCache();
   const currency = settings.defaultCurrency || "UGX";
 
   const [lines, setLines] = useState<LoanScheduleLine[]>([]);
@@ -1006,6 +1014,14 @@ export function ScheduleDetailModal({ visible, schedule, onClose, onUpdated }: P
   const [showReschedule, setShowReschedule] = useState(false);
   const [localSchedule, setLocalSchedule] = useState<LoanSchedule | null>(null);
   const [lineMessageTarget, setLineMessageTarget] = useState<LoanScheduleLine | null>(null);
+
+  // Ref tracking the in-memory allLines so effects don't re-run when it changes
+  const allLinesRef = useRef(allLines);
+  useEffect(() => { allLinesRef.current = allLines; }, [allLines]);
+
+  // Ref tracking current lines length so loadLines can decide whether to show a spinner
+  const linesRef = useRef<LoanScheduleLine[]>([]);
+  linesRef.current = lines;
 
   // SMS state for post-mark-paid acknowledgment
   const [smsModal, setSmsModal] = useState<{
@@ -1021,38 +1037,51 @@ export function ScheduleDetailModal({ visible, schedule, onClose, onUpdated }: P
     setLocalSchedule(schedule);
   }, [schedule]);
 
+  // ── Immediately populate lines from in-memory cache when schedule changes ────
+  // This runs synchronously (no async), so lines appear before the modal animates in.
+  useEffect(() => {
+    if (!schedule) {
+      setLines([]);
+      setLineError(null);
+      return;
+    }
+    const fromCache = allLinesRef.current.items.filter(
+      (l) => Array.isArray(l.schedule_id) && l.schedule_id[0] === schedule.id
+    );
+    if (fromCache.length > 0) {
+      setLines(fromCache);
+      // Also sync ref so loadLines won't show a spinner
+      linesRef.current = fromCache;
+    }
+  }, [schedule]); // intentionally NOT depending on allLines to avoid re-running on every refresh
+
+  // ── Background refresh when modal becomes visible ────────────────────────────
+  // Shows a spinner only when there are no cached lines to display yet.
   const loadLines = useCallback(async () => {
     if (!schedule) return;
-    setLoadingLines(true);
     setLineError(null);
-
-    // Serve from cache immediately; hide spinner if cache is available
-    const cached = await loadLinesCache(schedule.id);
-    if (cached) {
-      setLines(cached);
-      setLoadingLines(false); // show cached data immediately without blocking spinner
-    }
-
+    const hasLines = linesRef.current.length > 0;
+    if (!hasLines) setLoadingLines(true);
     try {
       const uid = await authenticate(settings);
       const fetched = await fetchScheduleLinesById(settings, uid, schedule.id);
       setLines(fetched);
-      await saveLinesCache(schedule.id, fetched);
+      linesRef.current = fetched;
+      // Keep the global allLines cache in sync so next open is instant too
+      await updateScheduleLines(schedule.id, fetched);
     } catch (e: unknown) {
-      if (!cached) {
+      if (!hasLines) {
         setLineError(e instanceof Error ? e.message : String(e));
       }
-      // If we have cached data, silently fail and show cached lines
     } finally {
       setLoadingLines(false);
     }
-  }, [schedule, settings]);
+  }, [schedule, settings, updateScheduleLines]);
 
   useEffect(() => {
     if (visible && schedule) {
       loadLines();
-    } else {
-      setLines([]);
+    } else if (!visible) {
       setLineError(null);
     }
   }, [visible, schedule, loadLines]);
@@ -1103,12 +1132,10 @@ export function ScheduleDetailModal({ visible, schedule, onClose, onUpdated }: P
                   settings.smsEnabled &&
                   settings.twilioAccountSid && settings.twilioAuthToken && settings.twilioFromNumber) {
                 const partnerName = Array.isArray(schedule.partner_id) ? schedule.partner_id[1] : "Customer";
-                const freshLines = await loadLinesCache(schedule.id);
-                const nextLine = freshLines
-                  ? freshLines
-                      .filter((l) => l.state === "unpaid" && l.payment_date > line.payment_date)
-                      .sort((a, b) => a.payment_date.localeCompare(b.payment_date))[0] ?? null
-                  : null;
+                // Use the up-to-date in-memory lines (linesRef is updated by loadLines above)
+                const nextLine = linesRef.current
+                  .filter((l) => l.state === "unpaid" && l.payment_date > line.payment_date)
+                  .sort((a, b) => a.payment_date.localeCompare(b.payment_date))[0] ?? null;
 
                 const builtMsg = buildPaidLineSms(
                   partnerName,
@@ -1151,6 +1178,11 @@ export function ScheduleDetailModal({ visible, schedule, onClose, onUpdated }: P
   const openLines = useMemo(
     () => lines.filter((l) => l.state === "unpaid" || l.state === "missed"),
     [lines]
+  );
+
+  const outstandingBalance = useMemo(
+    () => openLines.reduce((sum, l) => sum + l.expected_amount, 0),
+    [openLines]
   );
 
   const handleEditSchedule = async (vals: { name: string }) => {
@@ -1307,6 +1339,7 @@ export function ScheduleDetailModal({ visible, schedule, onClose, onUpdated }: P
         visible={showReschedule}
         currency={currency}
         openLinesCount={openLines.length}
+        outstandingBalance={outstandingBalance}
         onClose={() => setShowReschedule(false)}
         onReschedule={handleReschedule}
       />
@@ -2007,6 +2040,35 @@ const reschedStyle = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     color: "#374151",
+  },
+  outstandingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#F0F9FF",
+    borderRadius: 8,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: "#BAE6FD",
+  },
+  outstandingText: {
+    fontSize: 13,
+    color: "#0369A1",
+  },
+  autoAmountRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#F0FDF4",
+    borderRadius: 8,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: "#BBF7D0",
+  },
+  autoAmountText: {
+    fontSize: 12,
+    color: "#166534",
+    flex: 1,
   },
 });
 

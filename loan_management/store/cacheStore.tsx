@@ -10,6 +10,7 @@ import React, {
 } from "react";
 import {
   authenticate,
+  fetchAllScheduleLines,
   fetchDueScheduleLines,
   fetchLoanInvoices,
   fetchLoanSchedules,
@@ -31,12 +32,14 @@ interface PersistedCache {
   invoices: CachedCollection<LoanInvoice>;
   schedules: CachedCollection<LoanSchedule>;
   dueLines: CachedCollection<LoanScheduleLine>;
+  allLines: CachedCollection<LoanScheduleLine>;
 }
 
 interface CacheContextValue {
   invoices: CachedCollection<LoanInvoice>;
   schedules: CachedCollection<LoanSchedule>;
   dueLines: CachedCollection<LoanScheduleLine>;
+  allLines: CachedCollection<LoanScheduleLine>;
   isLoaded: boolean;
   isOnline: boolean;
   refreshingInvoices: boolean;
@@ -45,6 +48,7 @@ interface CacheContextValue {
   refreshInvoices: () => Promise<void>;
   refreshSchedules: () => Promise<void>;
   refreshAll: () => Promise<void>;
+  updateScheduleLines: (scheduleId: number, lines: LoanScheduleLine[]) => Promise<void>;
 }
 
 const emptyCollection = <T,>(): CachedCollection<T> => ({
@@ -56,6 +60,7 @@ const CacheContext = createContext<CacheContextValue>({
   invoices: emptyCollection<LoanInvoice>(),
   schedules: emptyCollection<LoanSchedule>(),
   dueLines: emptyCollection<LoanScheduleLine>(),
+  allLines: emptyCollection<LoanScheduleLine>(),
   isLoaded: false,
   isOnline: true,
   refreshingInvoices: false,
@@ -64,6 +69,7 @@ const CacheContext = createContext<CacheContextValue>({
   refreshInvoices: async () => {},
   refreshSchedules: async () => {},
   refreshAll: async () => {},
+  updateScheduleLines: async () => {},
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -84,15 +90,16 @@ function isConfigured(s: { baseUrl: string; db: string; username: string; passwo
 async function loadPersistedCache(): Promise<PersistedCache> {
   try {
     const raw = await AsyncStorage.getItem(CACHE_KEY);
-    if (!raw) return { invoices: emptyCollection(), schedules: emptyCollection(), dueLines: emptyCollection() };
+    if (!raw) return { invoices: emptyCollection(), schedules: emptyCollection(), dueLines: emptyCollection(), allLines: emptyCollection() };
     const p = JSON.parse(raw) as Partial<PersistedCache>;
     return {
       invoices: p.invoices ?? emptyCollection(),
       schedules: p.schedules ?? emptyCollection(),
       dueLines: p.dueLines ?? emptyCollection(),
+      allLines: p.allLines ?? emptyCollection(),
     };
   } catch {
-    return { invoices: emptyCollection(), schedules: emptyCollection(), dueLines: emptyCollection() };
+    return { invoices: emptyCollection(), schedules: emptyCollection(), dueLines: emptyCollection(), allLines: emptyCollection() };
   }
 }
 
@@ -108,6 +115,7 @@ export function CacheProvider({ children }: { children: React.ReactNode }) {
   const [invoices, setInvoices] = useState<CachedCollection<LoanInvoice>>(emptyCollection());
   const [schedules, setSchedules] = useState<CachedCollection<LoanSchedule>>(emptyCollection());
   const [dueLines, setDueLines] = useState<CachedCollection<LoanScheduleLine>>(emptyCollection());
+  const [allLines, setAllLines] = useState<CachedCollection<LoanScheduleLine>>(emptyCollection());
   const [isLoaded, setIsLoaded] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
   const [refreshingInvoices, setRefreshingInvoices] = useState(false);
@@ -118,20 +126,24 @@ export function CacheProvider({ children }: { children: React.ReactNode }) {
   const invoicesRef = useRef<CachedCollection<LoanInvoice>>(emptyCollection());
   const schedulesRef = useRef<CachedCollection<LoanSchedule>>(emptyCollection());
   const dueLinesRef = useRef<CachedCollection<LoanScheduleLine>>(emptyCollection());
+  const allLinesRef = useRef<CachedCollection<LoanScheduleLine>>(emptyCollection());
 
   const flush = useCallback(
     async (
       ni: CachedCollection<LoanInvoice>,
       ns: CachedCollection<LoanSchedule>,
-      nd: CachedCollection<LoanScheduleLine>
+      nd: CachedCollection<LoanScheduleLine>,
+      nal: CachedCollection<LoanScheduleLine>
     ) => {
       invoicesRef.current = ni;
       schedulesRef.current = ns;
       dueLinesRef.current = nd;
+      allLinesRef.current = nal;
       setInvoices(ni);
       setSchedules(ns);
       setDueLines(nd);
-      await persistCache({ invoices: ni, schedules: ns, dueLines: nd });
+      setAllLines(nal);
+      await persistCache({ invoices: ni, schedules: ns, dueLines: nd, allLines: nal });
     },
     []
   );
@@ -141,9 +153,11 @@ export function CacheProvider({ children }: { children: React.ReactNode }) {
       invoicesRef.current = cache.invoices;
       schedulesRef.current = cache.schedules;
       dueLinesRef.current = cache.dueLines;
+      allLinesRef.current = cache.allLines;
       setInvoices(cache.invoices);
       setSchedules(cache.schedules);
       setDueLines(cache.dueLines);
+      setAllLines(cache.allLines);
     }).finally(() => setIsLoaded(true));
   }, []);
 
@@ -163,7 +177,7 @@ export function CacheProvider({ children }: { children: React.ReactNode }) {
     try {
       const uid = await authenticate(settings);
       const items = await fetchLoanInvoices(settings, uid);
-      await flush({ items, fetchedAt: new Date().toISOString() }, schedulesRef.current, dueLinesRef.current);
+      await flush({ items, fetchedAt: new Date().toISOString() }, schedulesRef.current, dueLinesRef.current, allLinesRef.current);
     } finally {
       setRefreshingInvoices(false);
     }
@@ -174,8 +188,12 @@ export function CacheProvider({ children }: { children: React.ReactNode }) {
     setRefreshingSchedules(true);
     try {
       const uid = await authenticate(settings);
-      const items = await fetchLoanSchedules(settings, uid);
-      await flush(invoicesRef.current, { items, fetchedAt: new Date().toISOString() }, dueLinesRef.current);
+      const fetchedAt = new Date().toISOString();
+      const [scheduleItems, lineItems] = await Promise.all([
+        fetchLoanSchedules(settings, uid),
+        fetchAllScheduleLines(settings, uid),
+      ]);
+      await flush(invoicesRef.current, { items: scheduleItems, fetchedAt }, dueLinesRef.current, { items: lineItems, fetchedAt });
     } finally {
       setRefreshingSchedules(false);
     }
@@ -189,16 +207,18 @@ export function CacheProvider({ children }: { children: React.ReactNode }) {
     try {
       const uid = await authenticate(settings);
       const today = todayString();
-      const [invoiceItems, scheduleItems, dueLineItems] = await Promise.all([
+      const [invoiceItems, scheduleItems, dueLineItems, lineItems] = await Promise.all([
         fetchLoanInvoices(settings, uid),
         fetchLoanSchedules(settings, uid),
         fetchDueScheduleLines(settings, uid, today),
+        fetchAllScheduleLines(settings, uid),
       ]);
       const fetchedAt = new Date().toISOString();
       await flush(
         { items: invoiceItems, fetchedAt },
         { items: scheduleItems, fetchedAt },
-        { items: dueLineItems, fetchedAt }
+        { items: dueLineItems, fetchedAt },
+        { items: lineItems, fetchedAt }
       );
     } finally {
       setRefreshingInvoices(false);
@@ -206,6 +226,18 @@ export function CacheProvider({ children }: { children: React.ReactNode }) {
       setRefreshingDueLines(false);
     }
   }, [flush, settings]);
+
+  // Update lines for a single schedule in the allLines cache (called after mutations)
+  const updateScheduleLines = useCallback(async (scheduleId: number, fresh: LoanScheduleLine[]) => {
+    const other = allLinesRef.current.items.filter(
+      (l) => !(Array.isArray(l.schedule_id) && l.schedule_id[0] === scheduleId)
+    );
+    const updated: CachedCollection<LoanScheduleLine> = {
+      items: [...other, ...fresh],
+      fetchedAt: new Date().toISOString(),
+    };
+    await flush(invoicesRef.current, schedulesRef.current, dueLinesRef.current, updated);
+  }, [flush]);
 
   // Background auto-refresh when coming online or first load
   useEffect(() => {
@@ -226,6 +258,7 @@ export function CacheProvider({ children }: { children: React.ReactNode }) {
         invoices,
         schedules,
         dueLines,
+        allLines,
         isLoaded,
         isOnline,
         refreshingInvoices,
@@ -234,6 +267,7 @@ export function CacheProvider({ children }: { children: React.ReactNode }) {
         refreshInvoices,
         refreshSchedules,
         refreshAll,
+        updateScheduleLines,
       }}
     >
       {children}

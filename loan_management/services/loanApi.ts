@@ -176,6 +176,24 @@ export async function setScheduleManualStatus(
   await callKw<boolean>(settings, uid, "loan.payment.schedule", "write", [[scheduleId], vals]);
 }
 
+export async function fetchAllScheduleLines(
+  settings: OdooSettings,
+  uid: number
+): Promise<LoanScheduleLine[]> {
+  return callKw<LoanScheduleLine[]>(
+    settings,
+    uid,
+    "loan.payment.schedule.line",
+    "search_read",
+    [[]],
+    {
+      fields: ["id", "schedule_id", "invoice_id", "currency_id", "payment_date", "expected_amount", "state", "paid_date", "note"],
+      order: "payment_date asc",
+      limit: 5000,
+    }
+  );
+}
+
 export async function fetchDueScheduleLines(
   settings: OdooSettings,
   uid: number,
