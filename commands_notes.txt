@@ -23,3 +23,9 @@ npm run reset-project
     #add import './global.css'; to the top of the root layout.tsx file
 
     #create a file called tailwind.d.ts at the root of the project with the following content
+
+
+build
+eas build -p android --profile preview
+
+npx expo start -c

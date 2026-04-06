@@ -1,8 +1,7 @@
 // Dashboard screen – landing page showing expense summaries, debt tracking, and daily reminder
 import { Ionicons } from "@expo/vector-icons";
-import * as Notifications from "expo-notifications";
 import { router, useFocusEffect } from "expo-router";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -23,46 +22,6 @@ import { Debt, useDebts } from "../../store/debtsStore";
 import { useSettings } from "../../store/settingsStore";
 import { OdooDailyEntry } from "../../types/odoo";
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
-
-async function requestNotificationPermission(): Promise<boolean> {
-  const { status: existing } = await Notifications.getPermissionsAsync();
-  if (existing === "granted") return true;
-  const { status } = await Notifications.requestPermissionsAsync();
-  return status === "granted";
-}
-
-async function scheduleDailyReminder(): Promise<void> {
-  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
-  for (const notif of scheduled) {
-    if (notif.content.data?.type === "daily_expense_reminder") {
-      await Notifications.cancelScheduledNotificationAsync(notif.identifier);
-    }
-  }
-  const granted = await requestNotificationPermission();
-  if (!granted) return;
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title: "💰 Daily Expense Reminder",
-      body: "Don't forget to log today's expenses!",
-      sound: true,
-      data: { type: "daily_expense_reminder" },
-    },
-    trigger: {
-      type: Notifications.SchedulableTriggerInputTypes.DAILY,
-      hour: 19,
-      minute: 30,
-    },
-  });
-}
 
 function formatDate(d: Date): string {
   const y = d.getFullYear();
@@ -194,8 +153,6 @@ export default function DashboardScreen() {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [reminderScheduled, setReminderScheduled] = useState(false);
-  const notifListener = useRef<Notifications.EventSubscription | null>(null);
 
   const [showDebtModal, setShowDebtModal] = useState(false);
   const [debtType, setDebtType] = useState<"i_owe" | "they_owe">("i_owe");
@@ -206,11 +163,6 @@ export default function DashboardScreen() {
 
   const isConfigured = !!(settings.baseUrl && settings.db && settings.username && settings.password);
 
-  useEffect(() => {
-    scheduleDailyReminder().then(() => setReminderScheduled(true)).catch(() => {});
-    notifListener.current = Notifications.addNotificationResponseReceivedListener(() => {});
-    return () => { notifListener.current?.remove(); };
-  }, []);
 
   const loadDashboard = useCallback(
     async (isRefresh = false) => {
@@ -313,12 +265,6 @@ export default function DashboardScreen() {
             </Text>
           </View>
           <View style={styles.greetingRight}>
-            <View style={[styles.reminderBadge, reminderScheduled && styles.reminderBadgeActive]}>
-              <Ionicons name="notifications-outline" size={16} color={reminderScheduled ? "#16A34A" : "#9CA3AF"} />
-              <Text style={[styles.reminderText, reminderScheduled && styles.reminderTextActive]}>
-                {reminderScheduled ? "7:30 PM" : "No alert"}
-              </Text>
-            </View>
             <TouchableOpacity onPress={handleLogout} style={styles.logoutBtn}>
               <Ionicons name="log-out-outline" size={18} color="#6B7280" />
             </TouchableOpacity>

@@ -4,6 +4,7 @@ import React, {
   useContext,
   useEffect,
   useReducer,
+  useRef,
 } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Expense, Settlement, CategoryConfig, CustomCategory, SplitEntry } from "../types";
@@ -12,10 +13,26 @@ import {
   saveCategoryConfigs,
   loadCustomCategories,
   saveCustomCategories,
+  loadExpensesCache,
+  saveExpensesCache,
 } from "../utils/storage";
 import { supabase } from "../services/supabase";
 import { useAuth } from "./AuthContext";
 import { useHousehold } from "./HouseholdContext";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+function isNetworkError(error: { message?: string; code?: string } | null | undefined): boolean {
+  if (!error) return false;
+  const msg = (error.message ?? "").toLowerCase();
+  return (
+    msg.includes("failed to fetch") ||
+    msg.includes("network request failed") ||
+    msg.includes("networkerror") ||
+    msg.includes("fetch error")
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Default categories (used when none are stored yet)
@@ -201,6 +218,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const { session } = useAuth();
   const { household } = useHousehold();
 
+  // Track whether the initial data load for the current household completed, so
+  // the persist effect doesn't overwrite the cache with an empty initial state.
+  const dataLoadedRef = useRef(false);
+
   // Load categories from local storage on mount.
   useEffect(() => {
     (async () => {
@@ -228,7 +249,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [state.categoryConfigs, state.customCategories, state.loaded]);
 
   // Load expenses & settlements from Supabase whenever household changes.
+  // Falls back to local cache when offline so data survives app restarts.
   useEffect(() => {
+    dataLoadedRef.current = false;
     if (!household?.id) {
       dispatch({ type: "SET_EXPENSES", payload: [] });
       dispatch({ type: "SET_SETTLEMENTS", payload: [] });
@@ -249,14 +272,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           .order("date", { ascending: false }),
       ]);
 
-      dispatch({
-        type: "SET_EXPENSES",
-        payload: (expRows.data ?? []).map(rowToExpense),
-      });
-      dispatch({
-        type: "SET_SETTLEMENTS",
-        payload: (setRows.data ?? []).map(rowToSettlement),
-      });
+      // If network error on either fetch, load from local cache instead.
+      if (
+        (expRows.error && isNetworkError(expRows.error)) ||
+        (setRows.error && isNetworkError(setRows.error))
+      ) {
+        const cached = await loadExpensesCache(household.id);
+        if (cached) {
+          dispatch({ type: "SET_EXPENSES", payload: cached.expenses });
+          dispatch({ type: "SET_SETTLEMENTS", payload: cached.settlements });
+        }
+        dataLoadedRef.current = true;
+        return;
+      }
+
+      const expenses = (expRows.data ?? []).map(rowToExpense);
+      const settlements = (setRows.data ?? []).map(rowToSettlement);
+
+      dispatch({ type: "SET_EXPENSES", payload: expenses });
+      dispatch({ type: "SET_SETTLEMENTS", payload: settlements });
+
+      // Persist successful fetch to cache for offline use.
+      await saveExpensesCache(household.id, { expenses, settlements });
+      dataLoadedRef.current = true;
     })();
   }, [household?.id]);
 
@@ -280,9 +318,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             .select("*")
             .eq("household_id", household.id)
             .order("date", { ascending: false });
-          dispatch({
-            type: "SET_EXPENSES",
-            payload: (data ?? []).map(rowToExpense),
+          const expenses = (data ?? []).map(rowToExpense);
+          dispatch({ type: "SET_EXPENSES", payload: expenses });
+          // Keep cache in sync with server data.
+          const cached = await loadExpensesCache(household.id);
+          await saveExpensesCache(household.id, {
+            expenses,
+            settlements: cached?.settlements ?? [],
           });
         }
       )
@@ -300,9 +342,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             .select("*")
             .eq("household_id", household.id)
             .order("date", { ascending: false });
-          dispatch({
-            type: "SET_SETTLEMENTS",
-            payload: (data ?? []).map(rowToSettlement),
+          const settlements = (data ?? []).map(rowToSettlement);
+          dispatch({ type: "SET_SETTLEMENTS", payload: settlements });
+          const cached = await loadExpensesCache(household.id);
+          await saveExpensesCache(household.id, {
+            expenses: cached?.expenses ?? [],
+            settlements,
           });
         }
       )
@@ -312,6 +357,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       supabase.removeChannel(channel);
     };
   }, [household?.id]);
+
+  // Persist expenses/settlements to cache whenever they change so optimistic
+  // items (added offline) survive app restarts.
+  useEffect(() => {
+    if (!household?.id || !dataLoadedRef.current) return;
+    saveExpensesCache(household.id, {
+      expenses: state.expenses,
+      settlements: state.settlements,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.expenses, state.settlements]);
 
   // ── Mutations ─────────────────────────────────────────────────────────────
 
@@ -336,9 +392,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         })
         .then(({ error }) => {
           if (error) {
-            // Roll back optimistic update on error.
-            dispatch({ type: "DELETE_EXPENSE", payload: tempId });
-            queueWrite({ type: "ADD_EXPENSE", payload: expense, householdId: household.id });
+            if (isNetworkError(error)) {
+              // Keep the optimistic item in state (the persist effect will cache it)
+              // and queue the write for when back online.
+              queueWrite({ type: "ADD_EXPENSE", payload: expense, householdId: household.id });
+            } else {
+              // Real API error → roll back the optimistic item.
+              dispatch({ type: "DELETE_EXPENSE", payload: tempId });
+            }
           }
         });
     },
@@ -403,8 +464,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         })
         .then(({ error }) => {
           if (error) {
-            dispatch({ type: "DELETE_SETTLEMENT", payload: tempId });
-            queueWrite({ type: "ADD_SETTLEMENT", payload: settlement, householdId: household.id });
+            if (isNetworkError(error)) {
+              queueWrite({ type: "ADD_SETTLEMENT", payload: settlement, householdId: household.id });
+            } else {
+              dispatch({ type: "DELETE_SETTLEMENT", payload: tempId });
+            }
           }
         });
     },
@@ -487,6 +551,4 @@ function queueWrite(item: QueuedWrite) {
     AsyncStorage.setItem(key, JSON.stringify(queue));
   });
 }
-
-
 

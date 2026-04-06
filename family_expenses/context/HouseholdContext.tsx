@@ -9,6 +9,25 @@ import { supabase } from "../services/supabase";
 import { Household, User } from "../types";
 import { USER_COLORS } from "../constants/colors";
 import { useAuth } from "./AuthContext";
+import {
+  loadHouseholdCache,
+  saveHouseholdCache,
+  clearHouseholdCache,
+} from "../utils/storage";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+function isNetworkError(error: { message?: string; code?: string } | null | undefined): boolean {
+  if (!error) return false;
+  const msg = (error.message ?? "").toLowerCase();
+  return (
+    msg.includes("failed to fetch") ||
+    msg.includes("network request failed") ||
+    msg.includes("networkerror") ||
+    msg.includes("fetch error")
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Context shape
@@ -46,12 +65,30 @@ export function HouseholdProvider({ children }: { children: React.ReactNode }) {
     setLoading(true);
 
     // Find the household this user belongs to.
-    const { data: memberRow } = await supabase
+    const { data: memberRow, error: memberError } = await supabase
       .from("household_members")
       .select("household_id")
       .eq("user_id", session.user.id)
       .limit(1)
       .single();
+
+    if (memberError) {
+      if (isNetworkError(memberError)) {
+        // Offline → try local cache so the user can continue using the app.
+        const cached = await loadHouseholdCache(session.user.id);
+        if (cached) {
+          setHousehold(cached.household);
+          setMembers(cached.members);
+          setLoading(false);
+          return;
+        }
+      }
+      // Either not a member, or cache is empty.
+      setHousehold(null);
+      setMembers([]);
+      setLoading(false);
+      return;
+    }
 
     if (!memberRow) {
       setHousehold(null);
@@ -61,13 +98,22 @@ export function HouseholdProvider({ children }: { children: React.ReactNode }) {
     }
 
     // Fetch household details.
-    const { data: hh } = await supabase
+    const { data: hh, error: hhError } = await supabase
       .from("households")
       .select("id, name, invite_code, created_at")
       .eq("id", memberRow.household_id)
       .single();
 
     if (!hh) {
+      if (hhError && isNetworkError(hhError)) {
+        const cached = await loadHouseholdCache(session.user.id);
+        if (cached) {
+          setHousehold(cached.household);
+          setMembers(cached.members);
+          setLoading(false);
+          return;
+        }
+      }
       setHousehold(null);
       setMembers([]);
       setLoading(false);
@@ -82,6 +128,7 @@ export function HouseholdProvider({ children }: { children: React.ReactNode }) {
       .select("user_id, joined_at")
       .eq("household_id", hh.id);
 
+    let users: User[] = [];
     if (memberRows && memberRows.length > 0) {
       const userIds = memberRows.map((r: { user_id: string }) => r.user_id);
       const { data: profiles } = await supabase
@@ -89,17 +136,18 @@ export function HouseholdProvider({ children }: { children: React.ReactNode }) {
         .select("id, name, color")
         .in("id", userIds);
 
-      const users: User[] = (profiles ?? []).map(
+      users = (profiles ?? []).map(
         (p: { id: string; name: string; color: string }, idx: number) => ({
           id: p.id,
           name: p.name || `Member ${idx + 1}`,
           color: p.color || USER_COLORS[idx % USER_COLORS.length],
         })
       );
-      setMembers(users);
-    } else {
-      setMembers([]);
     }
+    setMembers(users);
+
+    // Persist for offline use.
+    await saveHouseholdCache(session.user.id, { household: hh as Household, members: users });
 
     setLoading(false);
   }, [session?.user.id]);
@@ -186,6 +234,7 @@ export function HouseholdProvider({ children }: { children: React.ReactNode }) {
 
     if (error) return { error: error.message };
 
+    await clearHouseholdCache(session.user.id);
     setHousehold(null);
     setMembers([]);
     return {};

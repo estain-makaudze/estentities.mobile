@@ -2,15 +2,11 @@ import { createClient } from "@supabase/supabase-js";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // Expo SDK 46+ inlines EXPO_PUBLIC_ vars via Metro — no babel plugin needed.
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? "";
+const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? "";
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error(
-    "Missing Supabase credentials. Make sure EXPO_PUBLIC_SUPABASE_URL and " +
-    "EXPO_PUBLIC_SUPABASE_ANON_KEY are set in your .env file."
-  );
-}
+// Export a flag so the app can show a user-friendly error instead of crashing.
+export const supabaseMisconfigured = !supabaseUrl || !supabaseAnonKey;
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {

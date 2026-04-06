@@ -137,6 +137,12 @@ export default function ExpensesScreen() {
         </View>
       </View>
       <TouchableOpacity
+        style={styles.editBtn}
+        onPress={() => router.push({ pathname: "/edit-expense", params: { id: item.id } })}
+      >
+        <Text style={styles.editBtnText}>Edit</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
         style={styles.deleteBtn}
         onPress={() => handleDelete(item)}
       >
@@ -300,6 +306,8 @@ const styles = StyleSheet.create({
   cardDate: { fontSize: 12, color: "#8E8E93", marginTop: 2 },
   deleteBtn: { marginTop: 10, backgroundColor: "#FFF0F0", borderRadius: 8, padding: 8, alignItems: "center" },
   deleteBtnText: { color: "#E74C3C", fontSize: 13, fontWeight: "600" },
+  editBtn: { marginTop: 10, backgroundColor: "#EAF4FF", borderRadius: 8, padding: 8, alignItems: "center", marginBottom: 4 },
+  editBtnText: { color: "#4A90D9", fontSize: 13, fontWeight: "600" },
 
   empty: { flex: 1, alignItems: "center", justifyContent: "center" },
   emptyIcon: { fontSize: 56, marginBottom: 12 },
