@@ -21,7 +21,7 @@ import { authenticate, getCategories, getCurrencies } from "../../services/odooA
 import { useCategories } from "../../store/categoriesStore";
 import { useQueue } from "../../store/queueStore";
 import { useSettings } from "../../store/settingsStore";
-import { OdooCurrency } from "../../types/odoo";
+import { OdooCategory, OdooCurrency } from "../../types/odoo";
 
 function formatDate(d: Date): string {
   const y = d.getFullYear();
@@ -44,6 +44,9 @@ export default function EntryScreen() {
   const [currency, setCurrency] = useState(settings.defaultCurrency || "USD");
 
   const [currencies, setCurrencies] = useState<OdooCurrency[]>([]);
+  const [categories, setCategories] = useState<(OdooCategory & { isLocal?: boolean })[]>([]);
+  const [catsLoading, setCatsLoading] = useState(false);
+  const [catsError, setCatsError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -74,7 +77,22 @@ export default function EntryScreen() {
     }
   }, [isConfigured, isLoaded, isOnline, settings]);
 
-  useFocusEffect(useCallback(() => { loadCurrencies(); }, [loadCurrencies]));
+  const refreshCategories = useCallback(async () => {
+    if (!isConfigured || !isLoaded || !isOnline) return;
+    setCatsLoading(true);
+    setCatsError(null);
+    try {
+      const uid = await authenticate(settings);
+      const cats = await getCategories(settings, uid);
+      setCategories(cats);
+    } catch (e: unknown) {
+      setCatsError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCatsLoading(false);
+    }
+  }, [isConfigured, isLoaded, isOnline, settings]);
+
+  useFocusEffect(useCallback(() => { loadCurrencies(); refreshCategories(); }, [loadCurrencies, refreshCategories]));
 
   useEffect(() => {
     if (categories.length === 0 && localCategories.length > 0) {

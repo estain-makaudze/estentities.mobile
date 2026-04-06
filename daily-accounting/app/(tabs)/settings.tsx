@@ -30,7 +30,7 @@ const CATEGORY_COLORS = [
 export default function SettingsScreen() {
   const { settings, saveSettings } = useSettings();
   const { logout } = useAuth();
-  const { categories, addCategory, updateCategory, deleteCategory, resetToDefaults } = useCategories();
+  const { categories, addCategory, updateCategory, deleteCategory } = useCategories();
 
   const [baseUrl, setBaseUrl] = useState(settings.baseUrl);
   const [db, setDb] = useState(settings.db);
@@ -197,10 +197,6 @@ export default function SettingsScreen() {
             ))}
           </View>
 
-          <TouchableOpacity style={styles.resetCatBtn} onPress={() => Alert.alert("Reset Categories", "Reset to default categories? This will remove all custom categories.", [{ text: "Cancel", style: "cancel" }, { text: "Reset", style: "destructive", onPress: resetToDefaults }])}>
-            <Text style={styles.resetCatBtnText}>Reset to Defaults</Text>
-          </TouchableOpacity>
-
           <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
             <Ionicons name="log-out-outline" size={20} color="#DC2626" />
             <Text style={styles.logoutButtonText}>Sign Out</Text>
@@ -273,8 +269,6 @@ const styles = StyleSheet.create({
   catName: { fontSize: 14, fontWeight: "600", color: "#111827" },
   catType: { fontSize: 11, color: "#6B7280", textTransform: "capitalize" },
   catAction: { padding: 4 },
-  resetCatBtn: { marginTop: 12, alignSelf: "center", paddingVertical: 8, paddingHorizontal: 16 },
-  resetCatBtnText: { color: "#6B7280", fontSize: 13, fontWeight: "500", textDecorationLine: "underline" },
   logoutButton: { marginTop: 32, borderWidth: 2, borderColor: "#FCA5A5", borderRadius: 12, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 8, paddingVertical: 13, backgroundColor: "#FEF2F2" },
   logoutButtonText: { color: "#DC2626", fontSize: 16, fontWeight: "600" },
   modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)", justifyContent: "flex-end" },

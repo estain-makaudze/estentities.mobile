@@ -10,34 +10,20 @@ export interface LocalCategory {
   color: string;
 }
 
-export const DEFAULT_CATEGORIES: LocalCategory[] = [
-  { id: "def_1", name: "Food & Dining", entry_type: "expense", color: "#EF4444" },
-  { id: "def_2", name: "Transport", entry_type: "expense", color: "#F59E0B" },
-  { id: "def_3", name: "Utilities", entry_type: "expense", color: "#3B82F6" },
-  { id: "def_4", name: "Entertainment", entry_type: "expense", color: "#8B5CF6" },
-  { id: "def_5", name: "Healthcare", entry_type: "expense", color: "#10B981" },
-  { id: "def_6", name: "Shopping", entry_type: "expense", color: "#F97316" },
-  { id: "def_7", name: "Salary", entry_type: "income", color: "#22C55E" },
-  { id: "def_8", name: "Freelance", entry_type: "income", color: "#06B6D4" },
-  { id: "def_9", name: "Other", entry_type: "expense", color: "#6B7280" },
-];
-
 interface CategoriesContextValue {
   categories: LocalCategory[];
   isLoaded: boolean;
   addCategory: (cat: Omit<LocalCategory, "id">) => Promise<void>;
   updateCategory: (id: string, updates: Partial<Omit<LocalCategory, "id">>) => Promise<void>;
   deleteCategory: (id: string) => Promise<void>;
-  resetToDefaults: () => Promise<void>;
 }
 
 const CategoriesContext = createContext<CategoriesContextValue>({
-  categories: DEFAULT_CATEGORIES,
+  categories: [],
   isLoaded: false,
   addCategory: async () => {},
   updateCategory: async () => {},
   deleteCategory: async () => {},
-  resetToDefaults: async () => {},
 });
 
 function makeId(): string {
@@ -45,7 +31,7 @@ function makeId(): string {
 }
 
 export function CategoriesProvider({ children }: { children: React.ReactNode }) {
-  const [categories, setCategories] = useState<LocalCategory[]>(DEFAULT_CATEGORIES);
+  const [categories, setCategories] = useState<LocalCategory[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
@@ -54,7 +40,7 @@ export function CategoriesProvider({ children }: { children: React.ReactNode }) 
         if (raw) {
           try {
             const parsed = JSON.parse(raw);
-            if (Array.isArray(parsed) && parsed.length > 0) setCategories(parsed);
+            if (Array.isArray(parsed)) setCategories(parsed);
           } catch (e) { console.error("Failed to parse categories", e); }
         }
       })
@@ -87,12 +73,8 @@ export function CategoriesProvider({ children }: { children: React.ReactNode }) 
     [categories, persist]
   );
 
-  const resetToDefaults = useCallback(async () => {
-    await persist(DEFAULT_CATEGORIES);
-  }, [persist]);
-
   return (
-    <CategoriesContext.Provider value={{ categories, isLoaded, addCategory, updateCategory, deleteCategory, resetToDefaults }}>
+    <CategoriesContext.Provider value={{ categories, isLoaded, addCategory, updateCategory, deleteCategory }}>
       {children}
     </CategoriesContext.Provider>
   );
