@@ -67,7 +67,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = useCallback(
     async (email: string, password: string): Promise<{ error?: string }> => {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) return { error: error.message };
+      if (error) {
+        // Give a more actionable message for the email-not-confirmed case.
+        if (
+          error.message.toLowerCase().includes("email not confirmed") ||
+          error.message.toLowerCase().includes("email_not_confirmed")
+        ) {
+          return {
+            error:
+              "Your email address has not been confirmed.\n\n" +
+              "To fix this, go to your Supabase Dashboard → " +
+              "Authentication → Providers → Email and turn off " +
+              '"Confirm email", then try again.',
+          };
+        }
+        return { error: error.message };
+      }
       return {};
     },
     []
@@ -82,14 +97,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Assign a color based on a simple rotation.
       const color = USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)];
 
-      const { error } = await supabase.auth.signUp({
+      const { error: signUpError } = await supabase.auth.signUp({
         email,
         password,
         options: {
           data: { name, color },
         },
       });
-      if (error) return { error: error.message };
+      if (signUpError) return { error: signUpError.message };
+
+      // Auto sign-in immediately after registration (works when email
+      // confirmation is disabled in Supabase Dashboard →
+      // Authentication → Providers → Email → "Confirm email" OFF).
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (signInError) return { error: signInError.message };
+
       return {};
     },
     []

@@ -11,7 +11,7 @@ import { useRouter } from "expo-router";
 import { useApp } from "../../context/AppContext";
 import { useAuth } from "../../context/AuthContext";
 import { useHousehold } from "../../context/HouseholdContext";
-import { computeNetBalances, computeDebtSummary, totalPaidByUser } from "../../utils/balance";
+import { computeNetBalances, computeDebtSummary } from "../../utils/balance";
 
 export default function DashboardScreen() {
   const { state } = useApp();
@@ -51,7 +51,15 @@ export default function DashboardScreen() {
   const userIds = users.map((u) => u.id);
   const balances = computeNetBalances(expenses, settlements, userIds);
   const debts = computeDebtSummary(balances);
-  const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
+
+  // This-month filter
+  const now = new Date();
+  const thisMonthExpenses = expenses.filter((e) => {
+    const d = new Date(e.date);
+    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+  });
+  const thisMonthTotal = thisMonthExpenses.reduce((s, e) => s + e.amount, 0);
+  const monthLabel = now.toLocaleString("default", { month: "long", year: "numeric" });
 
   const getUserName = (id: string) =>
     users.find((u) => u.id === id)?.name ?? "Unknown";
@@ -87,10 +95,10 @@ export default function DashboardScreen() {
 
       {/* Summary card */}
       <View style={styles.summaryCard}>
-        <Text style={styles.summaryLabel}>Total Family Expenses</Text>
-        <Text style={styles.summaryAmount}>${totalExpenses.toFixed(2)}</Text>
+        <Text style={styles.summaryLabel}>{monthLabel} Expenses</Text>
+        <Text style={styles.summaryAmount}>${thisMonthTotal.toFixed(2)}</Text>
         <Text style={styles.summaryMeta}>
-          {expenses.length} expense{expenses.length !== 1 ? "s" : ""} · {users.length}{" "}
+          {thisMonthExpenses.length} expense{thisMonthExpenses.length !== 1 ? "s" : ""} · {users.length}{" "}
           {users.length !== 1 ? "people" : "person"}
         </Text>
       </View>
@@ -161,17 +169,25 @@ export default function DashboardScreen() {
         </>
       )}
 
-      {/* Per-user totals */}
-      <Text style={styles.sectionTitle}>Who Paid What</Text>
+      {/* Per-user net balances */}
+      <Text style={styles.sectionTitle}>Total Balance</Text>
       {users.map((user) => {
-        const paid = totalPaidByUser(expenses, user.id);
+        const bal = balances[user.id] ?? 0;
+        const isPositive = bal > 0.009;
+        const isNegative = bal < -0.009;
         return (
           <View key={user.id} style={styles.userRow}>
             <View style={[styles.avatar, { backgroundColor: user.color }]}>
               <Text style={styles.avatarText}>{(user.name || "?")[0].toUpperCase()}</Text>
             </View>
             <Text style={styles.userName}>{user.name}</Text>
-            <Text style={styles.userAmount}>${paid.toFixed(2)}</Text>
+            <View style={styles.balancePill(isPositive, isNegative)}>
+              <Text style={styles.balancePillText(isPositive, isNegative)}>
+                {isPositive ? "+" : ""}
+                {isNegative ? "-" : ""}
+                {isPositive || isNegative ? `$${Math.abs(bal).toFixed(2)}` : "Settled ✅"}
+              </Text>
+            </View>
           </View>
         );
       })}
@@ -301,7 +317,17 @@ const styles = StyleSheet.create({
   avatar: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", marginRight: 12 },
   avatarText: { color: "#fff", fontWeight: "700", fontSize: 16 },
   userName: { flex: 1, fontSize: 16, color: "#1C1C1E" },
-  userAmount: { fontSize: 16, fontWeight: "600", color: "#1C1C1E" },
+  balancePill: (positive: boolean, negative: boolean) => ({
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 20,
+    backgroundColor: positive ? "#E8FAF0" : negative ? "#FFF0F0" : "#F2F2F7",
+  }),
+  balancePillText: (positive: boolean, negative: boolean) => ({
+    fontSize: 14,
+    fontWeight: "700" as const,
+    color: positive ? "#2ECC71" : negative ? "#E74C3C" : "#6C6C70",
+  }),
 
   settledBadge: { backgroundColor: "#E8FAF0", borderRadius: 12, padding: 16, alignItems: "center", marginBottom: 8 },
   settledText: { fontSize: 16, color: "#2ECC71", fontWeight: "600" },

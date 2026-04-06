@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import {
   Alert,
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -106,7 +108,12 @@ export default function SettingsScreen() {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 24}
+    >
+      <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
 
       {/* ── Categories Section ─────────────────────────────────────────── */}
       <View style={styles.section}>
@@ -257,6 +264,7 @@ export default function SettingsScreen() {
         )}
       </View>
     </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 

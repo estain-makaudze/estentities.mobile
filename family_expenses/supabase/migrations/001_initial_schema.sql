@@ -1,6 +1,12 @@
 -- ============================================================
--- Family Expenses — Initial Supabase Schema
+-- Family Expenses — Initial Supabase Schema  (v2 — includes RPCs)
 -- Run this in the Supabase SQL editor (Dashboard → SQL Editor).
+--
+-- HOW TO RUN:
+--   1. Go to https://supabase.com/dashboard/project/<your-project-id>
+--   2. Click "SQL Editor" in the left sidebar
+--   3. Paste this entire file and click "Run"
+--   4. You should see "Success. No rows returned" for each statement
 -- ============================================================
 
 -- ----------------------------------------------------------
@@ -158,3 +164,150 @@ CREATE POLICY "settlements: household members only"
 ALTER PUBLICATION supabase_realtime ADD TABLE public.expenses;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.settlements;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.household_members;
+
+-- ============================================================
+-- RPC helper functions (SECURITY DEFINER = bypass RLS)
+--
+-- WHY these are needed:
+--   The RLS on `households` only lets you SELECT rows you are
+--   already a member of.  That creates a chicken-and-egg problem:
+--     • create_household — you must INSERT the household *and*
+--       INSERT yourself as a member in one go before any SELECT.
+--     • join_household_by_code — you must READ the household
+--       (to get its id) before you can INSERT yourself as a member.
+--
+--   Both operations are impossible with plain table access from
+--   the client.  Running them as SECURITY DEFINER functions on the
+--   server side lets Postgres act as superuser for just those two
+--   operations, while everything else stays behind RLS.
+-- ============================================================
+
+-- ----------------------------------------------------------
+-- create_household(household_name TEXT) → JSONB
+--   Generates a unique invite code, creates the household row,
+--   and immediately adds the calling user as the first member.
+--   Returns { id, name, invite_code } on success.
+-- ----------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.create_household(household_name TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_invite_code TEXT;
+  v_household_id UUID;
+  v_attempts    INT := 0;
+  chars         TEXT := 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  code          TEXT;
+  i             INT;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'Not authenticated';
+  END IF;
+
+  IF trim(household_name) = '' THEN
+    RAISE EXCEPTION 'Household name cannot be blank';
+  END IF;
+
+  -- Generate a unique 8-character invite code.
+  LOOP
+    code := '';
+    FOR i IN 1..8 LOOP
+      code := code || substr(chars, floor(random() * length(chars) + 1)::int, 1);
+    END LOOP;
+
+    EXIT WHEN NOT EXISTS (SELECT 1 FROM households WHERE invite_code = code);
+
+    v_attempts := v_attempts + 1;
+    IF v_attempts >= 10 THEN
+      RAISE EXCEPTION 'Could not generate a unique invite code — please try again';
+    END IF;
+  END LOOP;
+
+  v_invite_code := code;
+
+  -- Create the household.
+  INSERT INTO households (name, invite_code)
+  VALUES (trim(household_name), v_invite_code)
+  RETURNING id INTO v_household_id;
+
+  -- Add the creator as the first member.
+  INSERT INTO household_members (household_id, user_id)
+  VALUES (v_household_id, auth.uid());
+
+  RETURN jsonb_build_object(
+    'id',          v_household_id,
+    'name',        trim(household_name),
+    'invite_code', v_invite_code
+  );
+END;
+$$;
+
+-- ----------------------------------------------------------
+-- join_household_by_code(p_invite_code TEXT) → JSONB
+--   Looks up the household by invite code (bypassing RLS),
+--   then inserts the calling user as a member.
+--   Returns { id, name, invite_code, already_member } on success,
+--   or { error: '...' } when the code is invalid.
+-- ----------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.join_household_by_code(p_invite_code TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_hh households%ROWTYPE;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'Not authenticated';
+  END IF;
+
+  -- Find the household ignoring RLS (SECURITY DEFINER).
+  SELECT * INTO v_hh
+  FROM households
+  WHERE invite_code = upper(trim(p_invite_code));
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('error', 'Invalid invite code. Please check and try again.');
+  END IF;
+
+  -- Already a member?
+  IF EXISTS (
+    SELECT 1 FROM household_members
+    WHERE household_id = v_hh.id AND user_id = auth.uid()
+  ) THEN
+    RETURN jsonb_build_object(
+      'id',            v_hh.id,
+      'name',          v_hh.name,
+      'invite_code',   v_hh.invite_code,
+      'already_member', true
+    );
+  END IF;
+
+  -- Join the household.
+  INSERT INTO household_members (household_id, user_id)
+  VALUES (v_hh.id, auth.uid());
+
+  RETURN jsonb_build_object(
+    'id',            v_hh.id,
+    'name',          v_hh.name,
+    'invite_code',   v_hh.invite_code,
+    'already_member', false
+  );
+END;
+$$;
+
+-- ----------------------------------------------------------
+-- Grant execute to authenticated users
+-- ----------------------------------------------------------
+GRANT EXECUTE ON FUNCTION public.create_household(TEXT)          TO authenticated;
+GRANT EXECUTE ON FUNCTION public.join_household_by_code(TEXT)    TO authenticated;
+
+-- ============================================================
+-- Force PostgREST to reload its schema cache immediately.
+-- Without this you may get "table not found in schema cache"
+-- errors for a few seconds after running the migration.
+-- ============================================================
+NOTIFY pgrst, 'reload schema';
+
+

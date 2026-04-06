@@ -1,13 +1,28 @@
 import { Stack, useRouter, useSegments } from "expo-router";
 import { useEffect } from "react";
-import { ActivityIndicator, View } from "react-native";
+import { ActivityIndicator, Alert, View } from "react-native";
 import { AppProvider } from "../context/AppContext";
 import { AuthProvider, useAuth } from "../context/AuthContext";
 import { HouseholdProvider, useHousehold } from "../context/HouseholdContext";
 import { useSync } from "../hooks/useSync";
+import { checkSchema } from "../services/supabase";
 
 function SyncRunner() {
   useSync();
+  return null;
+}
+
+// Run the schema health-check once when the app starts.
+// If the migration hasn't been applied to Supabase yet, show a clear alert
+// instead of a cryptic "table not found in schema cache" deep inside a context.
+function SchemaCheck() {
+  useEffect(() => {
+    checkSchema().then((msg) => {
+      if (msg) {
+        Alert.alert("Database Setup Required", msg, [{ text: "OK" }]);
+      }
+    });
+  }, []);
   return null;
 }
 
@@ -75,6 +90,7 @@ export default function RootLayout() {
               }}
             />
           </Stack>
+          <SchemaCheck />
           <AuthGuard />
           <SyncRunner />
         </AppProvider>

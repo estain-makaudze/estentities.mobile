@@ -26,18 +26,6 @@ interface HouseholdContextValue {
 const HouseholdContext = createContext<HouseholdContextValue | null>(null);
 
 // ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-function generateInviteCode(): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let code = "";
-  for (let i = 0; i < 8; i++) {
-    code += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return code;
-}
-
-// ---------------------------------------------------------------------------
 // Provider
 // ---------------------------------------------------------------------------
 export function HouseholdProvider({ children }: { children: React.ReactNode }) {
@@ -149,31 +137,17 @@ export function HouseholdProvider({ children }: { children: React.ReactNode }) {
     async (name: string): Promise<{ error?: string }> => {
       if (!session?.user.id) return { error: "Not authenticated." };
 
-      // Keep trying until we get a unique invite code.
-      let inviteCode = generateInviteCode();
-      for (let attempt = 0; attempt < 5; attempt++) {
-        const { data: conflict } = await supabase
-          .from("households")
-          .select("id")
-          .eq("invite_code", inviteCode)
-          .single();
-        if (!conflict) break;
-        inviteCode = generateInviteCode();
-      }
+      // create_household is a SECURITY DEFINER RPC that:
+      //   1. Generates a unique invite code server-side
+      //   2. INSERTs the household row
+      //   3. INSERTs the creator as the first member
+      // All in one atomic transaction, bypassing RLS.
+      const { data, error } = await supabase.rpc("create_household", {
+        household_name: name.trim(),
+      });
 
-      const { data: hh, error: hhErr } = await supabase
-        .from("households")
-        .insert({ name: name.trim(), invite_code: inviteCode })
-        .select()
-        .single();
-
-      if (hhErr || !hh) return { error: hhErr?.message ?? "Failed to create household." };
-
-      const { error: memberErr } = await supabase
-        .from("household_members")
-        .insert({ household_id: hh.id, user_id: session.user.id });
-
-      if (memberErr) return { error: memberErr.message };
+      if (error) return { error: error.message };
+      if (data?.error) return { error: data.error as string };
 
       await fetchHousehold();
       return {};
@@ -185,33 +159,15 @@ export function HouseholdProvider({ children }: { children: React.ReactNode }) {
     async (inviteCode: string): Promise<{ error?: string }> => {
       if (!session?.user.id) return { error: "Not authenticated." };
 
-      const { data: hh, error: hhErr } = await supabase
-        .from("households")
-        .select("id, name, invite_code, created_at")
-        .eq("invite_code", inviteCode.trim().toUpperCase())
-        .single();
+      // join_household_by_code is a SECURITY DEFINER RPC that can SELECT
+      // the household by invite_code even though the user isn't a member yet
+      // (plain client-side SELECT would be blocked by RLS).
+      const { data, error } = await supabase.rpc("join_household_by_code", {
+        p_invite_code: inviteCode.trim().toUpperCase(),
+      });
 
-      if (hhErr || !hh) return { error: "Invalid invite code. Please check and try again." };
-
-      // Check if already a member.
-      const { data: existing } = await supabase
-        .from("household_members")
-        .select("household_id")
-        .eq("household_id", hh.id)
-        .eq("user_id", session.user.id)
-        .single();
-
-      if (existing) {
-        // Already a member — just load it.
-        await fetchHousehold();
-        return {};
-      }
-
-      const { error: memberErr } = await supabase
-        .from("household_members")
-        .insert({ household_id: hh.id, user_id: session.user.id });
-
-      if (memberErr) return { error: memberErr.message };
+      if (error) return { error: error.message };
+      if (data?.error) return { error: data.error as string };
 
       await fetchHousehold();
       return {};
