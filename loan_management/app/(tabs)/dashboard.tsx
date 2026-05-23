@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 import { ScheduleDetailModal } from "../ScheduleDetailModal";
+import { SyncStatusBanner } from "../../components/SyncStatusBanner";
 import { useCache } from "../../store/cacheStore";
 import { useSettings } from "../../store/settingsStore";
 import { LoanSchedule, LoanScheduleLine, Many2OneValue } from "../../types/odoo";
@@ -344,6 +345,8 @@ export default function DashboardScreen() {
         onClose={() => setSelectedSchedule(null)}
         onUpdated={async () => { try { await refreshAll(); } catch { /* silent */ } }}
       />
+
+      <SyncStatusBanner />
 
       <ScrollView
         style={{ flex: 1, backgroundColor: "#F1F5F9" }}

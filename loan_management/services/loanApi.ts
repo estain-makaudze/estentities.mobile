@@ -69,8 +69,10 @@ export async function fetchLoanSchedules(
       "next_single_amount",
       "next_payment_date",
       "missed_count",
+      "reschedule_count",
       "management_status",
       "manual_management_status",
+      "needs_attention",
     ],
     order: "id desc",
     limit: 200,
@@ -89,7 +91,7 @@ export async function fetchScheduleLinesByInvoiceId(
     "search_read",
     [[["invoice_id", "=", invoiceId]]],
     {
-      fields: ["id", "schedule_id", "invoice_id", "currency_id", "payment_date", "expected_amount", "state", "paid_date", "note"],
+      fields: ["id", "schedule_id", "invoice_id", "currency_id", "payment_date", "expected_amount", "state", "paid_date", "note", "is_partial", "amount_paid"],
       order: "payment_date asc",
     }
   );
@@ -107,7 +109,7 @@ export async function fetchScheduleLinesById(
     "search_read",
     [[["schedule_id", "=", scheduleId]]],
     {
-      fields: ["id", "schedule_id", "invoice_id", "currency_id", "payment_date", "expected_amount", "state", "paid_date", "note"],
+      fields: ["id", "schedule_id", "invoice_id", "currency_id", "payment_date", "expected_amount", "state", "paid_date", "note", "is_partial", "amount_paid"],
       order: "payment_date asc",
     }
   );
@@ -187,7 +189,7 @@ export async function fetchAllScheduleLines(
     "search_read",
     [[]],
     {
-      fields: ["id", "schedule_id", "invoice_id", "currency_id", "payment_date", "expected_amount", "state", "paid_date", "note"],
+      fields: ["id", "schedule_id", "invoice_id", "currency_id", "payment_date", "expected_amount", "state", "paid_date", "note", "is_partial", "amount_paid"],
       order: "payment_date asc",
       limit: 5000,
     }
@@ -221,6 +223,8 @@ export async function fetchDueScheduleLines(
         "state",
         "paid_date",
         "note",
+        "is_partial",
+        "amount_paid",
       ],
       order: "payment_date asc",
       limit: 500,
@@ -321,5 +325,153 @@ export async function createLoanApplication(
     { fields: ["id", "name"], limit: 1 }
   );
   return records[0];
+}
+
+// ── Wizard executors (mirror Odoo loan_management wizards) ──────────────────
+// These reproduce, byte-for-byte where it matters, the way the Odoo UI drives
+// its TransientModel wizards: create a wizard record, then invoke its action
+// method. Odoo remains the single source of truth for all amortization and
+// carry-forward logic — the mobile app never recomputes it server-side.
+
+/** Lightweight read of a single schedule line, used for conflict preflight
+ *  before applying a queued mutation. Returns null if the line is gone. */
+export async function fetchScheduleLineBasic(
+  settings: OdooSettings,
+  uid: number,
+  lineId: number
+): Promise<Pick<LoanScheduleLine, "id" | "state" | "expected_amount" | "payment_date" | "schedule_id"> | null> {
+  const rows = await callKw<
+    Pick<LoanScheduleLine, "id" | "state" | "expected_amount" | "payment_date" | "schedule_id">[]
+  >(
+    settings,
+    uid,
+    "loan.payment.schedule.line",
+    "search_read",
+    [[["id", "=", lineId]]],
+    { fields: ["id", "state", "expected_amount", "payment_date", "schedule_id"], limit: 1 }
+  );
+  return rows.length ? rows[0] : null;
+}
+
+export type SchedulePlanUnit = "week" | "month" | "year";
+
+export interface GenerateScheduleParams {
+  invoiceId: number;
+  /** "generate" creates a fresh plan; "reinstate" cancels open lines first. */
+  mode: "generate" | "reinstate";
+  firstPaymentDate: string; // YYYY-MM-DD
+  planUnit: SchedulePlanUnit;
+  intervalNumber: number;
+  installmentCount: number;
+  /** Whole-number amount per installment; leftover lands on a final line. */
+  planAmount?: number;
+}
+
+/** Mirrors account.move "Generate / Reinstate Payment Schedule": creates the
+ *  loan.payment.schedule.generate.wizard then runs action_generate. */
+export async function generatePaymentSchedule(
+  settings: OdooSettings,
+  uid: number,
+  p: GenerateScheduleParams
+): Promise<void> {
+  const vals: Record<string, unknown> = {
+    invoice_id: p.invoiceId,
+    mode: p.mode,
+    first_payment_date: p.firstPaymentDate,
+    plan_unit: p.planUnit,
+    interval_number: p.intervalNumber,
+    installment_count: p.installmentCount,
+  };
+  if (p.planAmount && p.planAmount > 0) {
+    vals.plan_amount = p.planAmount;
+  }
+  const wizardId = await callKw<number>(
+    settings,
+    uid,
+    "loan.payment.schedule.generate.wizard",
+    "create",
+    [vals]
+  );
+  await callKw<unknown>(
+    settings,
+    uid,
+    "loan.payment.schedule.generate.wizard",
+    "action_generate",
+    [[wizardId]]
+  );
+}
+
+export interface PartialPaymentParams {
+  lineId: number;
+  amountPaid: number;
+  /** original expected_amount - amountPaid (Odoo also enforces this). */
+  outstandingAmount: number;
+  newDueDate: string; // YYYY-MM-DD
+}
+
+/** Mirrors line "Record Partial Payment": creates loan.partial.payment.wizard
+ *  then runs action_confirm (marks line paid + carries the remainder). */
+export async function recordPartialPayment(
+  settings: OdooSettings,
+  uid: number,
+  p: PartialPaymentParams
+): Promise<void> {
+  const wizardId = await callKw<number>(
+    settings,
+    uid,
+    "loan.partial.payment.wizard",
+    "create",
+    [
+      {
+        line_id: p.lineId,
+        amount_paid: p.amountPaid,
+        outstanding_amount: p.outstandingAmount,
+        new_due_date: p.newDueDate,
+      },
+    ]
+  );
+  await callKw<unknown>(
+    settings,
+    uid,
+    "loan.partial.payment.wizard",
+    "action_confirm",
+    [[wizardId]]
+  );
+}
+
+export interface MoveUnpaidParams {
+  lineId: number;
+  target: "next" | "date" | "keep";
+  targetDate?: string; // required when target === "date"
+}
+
+/** Mirrors line "Move Unpaid Amount": creates loan.move.unpaid.wizard then
+ *  runs action_confirm (merge into next / move to date / keep here). */
+export async function moveUnpaidAmount(
+  settings: OdooSettings,
+  uid: number,
+  p: MoveUnpaidParams
+): Promise<void> {
+  const vals: Record<string, unknown> = {
+    line_id: p.lineId,
+    target: p.target,
+  };
+  if (p.target === "date" && p.targetDate) {
+    vals.target_date = p.targetDate;
+  }
+  const wizardId = await callKw<number>(
+    settings,
+    uid,
+    "loan.move.unpaid.wizard",
+    "create",
+    [vals]
+  );
+  await callKw<unknown>(
+    settings,
+    uid,
+    "loan.move.unpaid.wizard",
+    "action_confirm",
+    [[wizardId]]
+  );
 }
 

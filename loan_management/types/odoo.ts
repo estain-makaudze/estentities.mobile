@@ -48,8 +48,10 @@ export interface LoanSchedule {
   next_single_amount: number;
   next_payment_date: string | false;
   missed_count: number;
+  reschedule_count: number;
   management_status: string;
   manual_management_status: string | false;
+  needs_attention: boolean;
 }
 
 export type ScheduleLineState = "unpaid" | "paid" | "missed" | "canceled";
@@ -64,6 +66,8 @@ export interface LoanScheduleLine {
   state: "unpaid" | "paid" | "missed" | "canceled";
   paid_date: string | false;
   note: string | false;
+  is_partial: boolean;
+  amount_paid: number;
 }
 
 export interface CachedCollection<T> {
