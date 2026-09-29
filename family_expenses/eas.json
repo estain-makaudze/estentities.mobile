@@ -8,8 +8,7 @@
       "developmentClient": true,
       "distribution": "internal",
       "env": {
-        "EXPO_PUBLIC_SUPABASE_URL": "https://fgolfhmghelggaevsjth.supabase.co",
-        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_qI-2hrQgazsoD0v7Z2FVBA_tiRznuLd"
+        "EXPO_PUBLIC_API_URL": "https://estentities.org/family-api"
       }
     },
     "preview": {
@@ -18,15 +17,13 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_SUPABASE_URL": "https://fgolfhmghelggaevsjth.supabase.co",
-        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_qI-2hrQgazsoD0v7Z2FVBA_tiRznuLd"
+        "EXPO_PUBLIC_API_URL": "https://estentities.org/family-api"
       }
     },
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_SUPABASE_URL": "https://fgolfhmghelggaevsjth.supabase.co",
-        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_qI-2hrQgazsoD0v7Z2FVBA_tiRznuLd"
+        "EXPO_PUBLIC_API_URL": "https://estentities.org/family-api"
       }
     }
   },

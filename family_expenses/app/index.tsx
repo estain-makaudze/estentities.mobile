@@ -1,22 +1,8 @@
-import { Redirect } from "expo-router";
-import { ActivityIndicator, View } from "react-native";
-import { useAuth } from "../context/AuthContext";
-import { useHousehold } from "../context/HouseholdContext";
+import { View } from "react-native";
+import { useTheme } from "../theme";
 
+/** Blank splash — AuthGuard in _layout redirects to login / setup / tabs. */
 export default function Index() {
-  const { session, loading: authLoading } = useAuth();
-  const { household, loading: householdLoading } = useHousehold();
-
-  if (authLoading || householdLoading) {
-    return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#F2F2F7" }}>
-        <ActivityIndicator size="large" color="#4A90D9" />
-      </View>
-    );
-  }
-
-  if (!session) return <Redirect href="/login" />;
-  if (!household) return <Redirect href="/household-setup" />;
-  return <Redirect href="/(tabs)" />;
+  const { c } = useTheme();
+  return <View style={{ flex: 1, backgroundColor: c.bg }} />;
 }
-

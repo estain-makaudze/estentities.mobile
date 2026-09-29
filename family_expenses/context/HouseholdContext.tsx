@@ -1,260 +1,131 @@
-import React, {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useState,
-} from "react";
-import { supabase } from "../services/supabase";
-import { Household, User } from "../types";
-import { USER_COLORS } from "../constants/colors";
+import React, { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { getMeta, setMeta } from "../db/database";
+import { notifyDataChanged, useDataVersion } from "../db/events";
+import { listHouseholds, listMembers, listUsers } from "../db/repo";
+import { api } from "../services/api";
+import { syncNow } from "../services/syncEngine";
+import type { Household, HouseholdMember, User } from "../types";
 import { useAuth } from "./AuthContext";
-import {
-  loadHouseholdCache,
-  saveHouseholdCache,
-  clearHouseholdCache,
-} from "../utils/storage";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-function isNetworkError(error: { message?: string; code?: string } | null | undefined): boolean {
-  if (!error) return false;
-  const msg = (error.message ?? "").toLowerCase();
-  return (
-    msg.includes("failed to fetch") ||
-    msg.includes("network request failed") ||
-    msg.includes("networkerror") ||
-    msg.includes("fetch error")
-  );
-}
+/**
+ * Current family + members, read from SQLite (works offline).
+ * Creating / joining / leaving a family needs the server (online only).
+ */
 
-// ---------------------------------------------------------------------------
-// Context shape
-// ---------------------------------------------------------------------------
 interface HouseholdContextValue {
   household: Household | null;
+  households: Household[];
+  /** Active members as users (for splits, pickers, balances) */
   members: User[];
-  loading: boolean;
-  createHousehold: (name: string) => Promise<{ error?: string }>;
-  joinHousehold: (inviteCode: string) => Promise<{ error?: string }>;
-  leaveHousehold: () => Promise<{ error?: string }>;
-  refreshHousehold: () => Promise<void>;
+  memberships: HouseholdMember[];
+  isOwner: boolean;
+  currency: string;
+  userName: (id: string) => string;
+  userColor: (id: string) => string;
+  createHousehold: (name: string, currency: string) => Promise<void>;
+  joinHousehold: (code: string) => Promise<void>;
+  leaveHousehold: () => Promise<void>;
+  rotateInviteCode: () => Promise<void>;
+  updateHousehold: (patch: { name?: string; currency?: string }) => Promise<void>;
+  removeMember: (userId: string) => Promise<void>;
+  switchHousehold: (id: string) => void;
 }
 
 const HouseholdContext = createContext<HouseholdContextValue | null>(null);
 
-// ---------------------------------------------------------------------------
-// Provider
-// ---------------------------------------------------------------------------
 export function HouseholdProvider({ children }: { children: React.ReactNode }) {
-  const { session } = useAuth();
+  const { userId } = useAuth();
+  const version = useDataVersion();
+  const [selected, setSelected] = useState<string | null>(() => getMeta("householdId"));
 
-  const [household, setHousehold] = useState<Household | null>(null);
-  const [members, setMembers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
+  const data = useMemo(() => {
+    void version;
+    if (!userId) return { households: [], household: null, memberships: [], members: [], allUsers: [] };
+    const households = listHouseholds();
+    const household = households.find((h) => h.id === selected) ?? households[0] ?? null;
+    const memberships = household ? listMembers(household.id) : [];
+    const allUsers = listUsers();
+    const members = memberships
+      .map((m) => allUsers.find((u) => u.id === m.userId))
+      .filter((u): u is User => !!u);
+    return { households, household, memberships, members, allUsers };
+  }, [userId, selected, version]);
 
-  const fetchHousehold = useCallback(async () => {
-    if (!session?.user.id) {
-      setHousehold(null);
-      setMembers([]);
-      setLoading(false);
-      return;
-    }
+  const switchHousehold = useCallback((id: string) => {
+    setMeta("householdId", id);
+    setSelected(id);
+    notifyDataChanged();
+  }, []);
 
-    setLoading(true);
+  const adopt = useCallback(async (h: { id: string }) => {
+    setMeta("householdId", h.id);
+    setSelected(h.id);
+    // New family → its history predates our cursor: pull everything.
+    await syncNow({ full: true });
+    notifyDataChanged();
+  }, []);
 
-    // Find the household this user belongs to.
-    const { data: memberRow, error: memberError } = await supabase
-      .from("household_members")
-      .select("household_id")
-      .eq("user_id", session.user.id)
-      .limit(1)
-      .single();
+  const createHousehold = useCallback(async (name: string, currency: string) => {
+    const res = await api<{ household: { id: string } }>("POST", "/households", { name, currency });
+    await adopt(res.household);
+  }, [adopt]);
 
-    if (memberError) {
-      if (isNetworkError(memberError)) {
-        // Offline → try local cache so the user can continue using the app.
-        const cached = await loadHouseholdCache(session.user.id);
-        if (cached) {
-          setHousehold(cached.household);
-          setMembers(cached.members);
-          setLoading(false);
-          return;
-        }
-      }
-      // Either not a member, or cache is empty.
-      setHousehold(null);
-      setMembers([]);
-      setLoading(false);
-      return;
-    }
+  const joinHousehold = useCallback(async (code: string) => {
+    const res = await api<{ household: { id: string } }>("POST", "/households/join", { code });
+    await adopt(res.household);
+  }, [adopt]);
 
-    if (!memberRow) {
-      setHousehold(null);
-      setMembers([]);
-      setLoading(false);
-      return;
-    }
+  const hid = data.household?.id;
 
-    // Fetch household details.
-    const { data: hh, error: hhError } = await supabase
-      .from("households")
-      .select("id, name, invite_code, created_at")
-      .eq("id", memberRow.household_id)
-      .single();
+  const leaveHousehold = useCallback(async () => {
+    if (!hid) return;
+    await api("POST", `/households/${hid}/leave`, {});
+    setMeta("householdId", null);
+    setSelected(null);
+    await syncNow({ full: true });
+  }, [hid]);
 
-    if (!hh) {
-      if (hhError && isNetworkError(hhError)) {
-        const cached = await loadHouseholdCache(session.user.id);
-        if (cached) {
-          setHousehold(cached.household);
-          setMembers(cached.members);
-          setLoading(false);
-          return;
-        }
-      }
-      setHousehold(null);
-      setMembers([]);
-      setLoading(false);
-      return;
-    }
+  const rotateInviteCode = useCallback(async () => {
+    if (!hid) return;
+    await api("POST", `/households/${hid}/rotate-code`, {});
+    await syncNow();
+  }, [hid]);
 
-    setHousehold(hh as Household);
+  const updateHousehold = useCallback(async (patch: { name?: string; currency?: string }) => {
+    if (!hid) return;
+    await api("PATCH", `/households/${hid}`, patch);
+    await syncNow();
+  }, [hid]);
 
-    // Fetch household members with their profiles.
-    const { data: memberRows } = await supabase
-      .from("household_members")
-      .select("user_id, joined_at")
-      .eq("household_id", hh.id);
+  const removeMember = useCallback(async (memberId: string) => {
+    if (!hid) return;
+    await api("DELETE", `/households/${hid}/members/${memberId}`);
+    await syncNow();
+  }, [hid]);
 
-    let users: User[] = [];
-    if (memberRows && memberRows.length > 0) {
-      const userIds = memberRows.map((r: { user_id: string }) => r.user_id);
-      const { data: profiles } = await supabase
-        .from("profiles")
-        .select("id, name, color")
-        .in("id", userIds);
-
-      users = (profiles ?? []).map(
-        (p: { id: string; name: string; color: string }, idx: number) => ({
-          id: p.id,
-          name: p.name || `Member ${idx + 1}`,
-          color: p.color || USER_COLORS[idx % USER_COLORS.length],
-        })
-      );
-    }
-    setMembers(users);
-
-    // Persist for offline use.
-    await saveHouseholdCache(session.user.id, { household: hh as Household, members: users });
-
-    setLoading(false);
-  }, [session?.user.id]);
-
-  useEffect(() => {
-    fetchHousehold();
-  }, [fetchHousehold]);
-
-  // Subscribe to household_members changes for real-time member updates.
-  useEffect(() => {
-    if (!household?.id) return;
-
-    const channel = supabase
-      .channel(`household_members:${household.id}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "household_members",
-          filter: `household_id=eq.${household.id}`,
-        },
-        () => {
-          fetchHousehold();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
+  const value = useMemo<HouseholdContextValue>(() => {
+    const byId = new Map(data.allUsers.map((u) => [u.id, u]));
+    return {
+      household: data.household,
+      households: data.households,
+      members: data.members,
+      memberships: data.memberships,
+      isOwner: !!data.household && data.household.ownerId === userId,
+      currency: data.household?.currency ?? "USD",
+      userName: (id) => (id === userId ? "You" : byId.get(id)?.name ?? "Former member"),
+      userColor: (id) => byId.get(id)?.color ?? "#8A8F9C",
+      createHousehold,
+      joinHousehold,
+      leaveHousehold,
+      rotateInviteCode,
+      updateHousehold,
+      removeMember,
+      switchHousehold,
     };
-  }, [household?.id, fetchHousehold]);
+  }, [data, userId, createHousehold, joinHousehold, leaveHousehold, rotateInviteCode, updateHousehold,
+      removeMember, switchHousehold]);
 
-  const createHousehold = useCallback(
-    async (name: string): Promise<{ error?: string }> => {
-      if (!session?.user.id) return { error: "Not authenticated." };
-
-      // create_household is a SECURITY DEFINER RPC that:
-      //   1. Generates a unique invite code server-side
-      //   2. INSERTs the household row
-      //   3. INSERTs the creator as the first member
-      // All in one atomic transaction, bypassing RLS.
-      const { data, error } = await supabase.rpc("create_household", {
-        household_name: name.trim(),
-      });
-
-      if (error) return { error: error.message };
-      if (data?.error) return { error: data.error as string };
-
-      await fetchHousehold();
-      return {};
-    },
-    [session?.user.id, fetchHousehold]
-  );
-
-  const joinHousehold = useCallback(
-    async (inviteCode: string): Promise<{ error?: string }> => {
-      if (!session?.user.id) return { error: "Not authenticated." };
-
-      // join_household_by_code is a SECURITY DEFINER RPC that can SELECT
-      // the household by invite_code even though the user isn't a member yet
-      // (plain client-side SELECT would be blocked by RLS).
-      const { data, error } = await supabase.rpc("join_household_by_code", {
-        p_invite_code: inviteCode.trim().toUpperCase(),
-      });
-
-      if (error) return { error: error.message };
-      if (data?.error) return { error: data.error as string };
-
-      await fetchHousehold();
-      return {};
-    },
-    [session?.user.id, fetchHousehold]
-  );
-
-  const leaveHousehold = useCallback(async (): Promise<{ error?: string }> => {
-    if (!session?.user.id || !household?.id) return { error: "No household to leave." };
-
-    const { error } = await supabase
-      .from("household_members")
-      .delete()
-      .eq("household_id", household.id)
-      .eq("user_id", session.user.id);
-
-    if (error) return { error: error.message };
-
-    await clearHouseholdCache(session.user.id);
-    setHousehold(null);
-    setMembers([]);
-    return {};
-  }, [session?.user.id, household?.id]);
-
-  return (
-    <HouseholdContext.Provider
-      value={{
-        household,
-        members,
-        loading,
-        createHousehold,
-        joinHousehold,
-        leaveHousehold,
-        refreshHousehold: fetchHousehold,
-      }}
-    >
-      {children}
-    </HouseholdContext.Provider>
-  );
+  return <HouseholdContext.Provider value={value}>{children}</HouseholdContext.Provider>;
 }
 
 export function useHousehold(): HouseholdContextValue {

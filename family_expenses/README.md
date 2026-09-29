@@ -1,105 +1,42 @@
-# Family Expenses App 👨‍👩‍👧‍👦
+# Family Expenses 👨‍👩‍👧‍👦
 
-A React Native app built with Expo for tracking shared expenses between family members or roommates, with flexible split configurations and automatic balance calculations.
+A shared family expense app built with Expo. It works **fully offline** and syncs with your own lightweight server (`server/`, which runs Node and Postgres) whenever the phone has internet.
 
 ## Features
+- **Offline first.** Everything is stored in SQLite on the phone. Changes queue up and sync automatically when the phone reconnects, returns to the foreground, or once a minute while the app is open.
+- **Phone login with no password.** Sign in with your phone number and name. Create a family and share its invite code, or join an existing family with a code.
+- **Home.** Shows this month's family spending against the budget, what you owe or are owed, quick actions, and the latest transactions.
+- **Statistics.**
+  - A 6-month spend-vs-budget bar chart; tap a month to switch to it.
+  - A category donut chart.
+  - A cumulative spending-pace chart compared with last month.
+  - Who paid versus each person's fair share.
+  - Insights: pace versus last month, a month-end projection, categories that are rising, the biggest expense, no-spend days, the busiest weekday, and fixed bills as a share of spending.
+- **Budgets.** Set a monthly budget for the family and for each category. You get notifications at 80% and 100%.
+- **Recurring bills.** Rent, fees and subscriptions are added automatically when due, even offline. You get a reminder the day before.
+- **Splits and balances.** Split expenses equally, by custom percentages, or not at all. Each category can have a default split. Debts are simplified to the fewest payments, and you can record settle-up payments.
+- **Categories** are shared by the whole family, and each has an emoji and a colour.
 
-### 1. **Per-User Expense Tracking**
-- Each expense entry is associated with the user who paid for it
-- All users can view all expenses
-- Track expenses across different categories (Groceries, Utilities, Rent, etc.)
+## Run
+```bash
+npm install
+npx expo run:android        # needs a dev build (expo-sqlite, secure-store, notifications)
+```
+Set the server address in `eas.json` (`EXPO_PUBLIC_API_URL`), or enter it in the app under **Login → Server settings**. For local testing, run `cd server && npm run dev` and use `http://<your-LAN-IP>:8787`. The Android emulator reaches your machine at `http://10.0.2.2:8787`.
 
-### 2. **Flexible Split Ratios**
-- **No Split**: One person owns the full expense (doesn't affect shared balance)
-- **Equal Split**: Expenses are divided equally among all users
-- **Custom Split**: Configure any percentage split (e.g., 70/30, 40/40/20)
-- Splits can be configured per expense or set as category defaults
+## Layout
+| Path | What |
+|---|---|
+| `db/` | SQLite schema (`database.ts`), writes plus outbox (`repo.ts`), analytics queries (`queries.ts`) |
+| `services/syncEngine.ts` | Outbox push and cursor pull, with backoff and NetInfo/AppState triggers |
+| `context/` | Session (`AuthContext`), current family (`HouseholdContext`), data API (`AppContext`) |
+| `utils/` | Balances, splits, insights, recurring generation, notifications |
+| `components/` | Design system (`ui.tsx`), SVG charts, tab bar |
+| `server/` | Sync API. Deployment and the Supabase import are in `server/README.md` |
 
-### 3. **Category-Based Default Splits** ⭐ NEW
-- Configure default split behavior for each expense category
-- When adding an expense, the split is automatically populated based on the category's configuration
-- Customize defaults in the Settings screen
-- Override defaults on individual expenses as needed
-
-### 4. **Automatic Balance Calculation**
-- Automatically calculates who owes whom and how much
-- Minimizes the number of transactions needed to settle up
-- Real-time balance updates as expenses and settlements are added
-
-### 5. **Partial Payments / Settlements**
-- Record payments from one user to another
-- Payments reduce the outstanding balance accordingly
-- Track settlement history
-
-## Get started
-
-1. Install dependencies
-
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## App Structure
-
-### Screens
-- **Dashboard** (`index.tsx`): Overview of total expenses and who owes whom
-- **Expenses** (`expenses.tsx`): List of all recorded expenses
-- **Settlements** (`settlements.tsx`): History of payments made
-- **Users** (`users.tsx`): Manage users who share expenses
-- **Settings** (`settings.tsx`): Configure default splits per category
-- **Add Expense** (`add-expense.tsx`): Record a new expense with flexible split options
-- **Add Settlement** (`add-settlement.tsx`): Record a payment between users
-
-### Key Files
-- `types/index.ts`: TypeScript interfaces for User, Expense, Settlement, CategoryConfig
-- `context/AppContext.tsx`: Global state management with React Context
-- `utils/storage.ts`: AsyncStorage persistence layer
-- `utils/balance.ts`: Balance calculation algorithms
-
-## Usage Examples
-
-### Example 1: Two Roommates Splitting 50/50
-- Add two users (e.g., "John" and "Sarah")
-- Set all categories to "Equal Split" in Settings
-- Add expenses as they occur
-- Dashboard shows who owes whom
-
-### Example 2: Custom Split Ratios
-- Configure "Rent" category as 70/30 (one person has a larger room)
-- Configure "Groceries" as 50/50
-- Configure "Utilities" as equal split
-- Each category automatically applies its default when adding expenses
-
-### Example 3: Mixed Personal and Shared Expenses
-- Set some categories to "No Split" (personal items)
-- Set others to equal or custom splits
-- Track everything in one place while keeping balances accurate
-
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## Tests
+```bash
+cd server
+npm test              # API + Supabase import, against in-memory Postgres
+npm run test:client   # two simulated phones running the app's real SQLite/sync code
+```

@@ -7,7 +7,7 @@ Three independent **Expo React Native** apps (Expo SDK 54, React 19, TypeScript 
 | Directory | Backend | Purpose |
 |---|---|---|
 | `daily-accounting/` | Odoo JSON-RPC | Daily income/expense entries with offline queue |
-| `family_expenses/` | Supabase | Shared household expense tracking with realtime sync |
+| `family_expenses/` | Own API (`family_expenses/server`, Node + Postgres) | Shared family expenses, budgets, recurring bills — offline-first with sync |
 | `loan_management/` | Odoo JSON-RPC + Twilio SMS | Loan collection management & application intake |
 
 Each app is fully self-contained — run all commands from **inside** the sub-directory, not the workspace root.
@@ -33,13 +33,14 @@ eas build -p android --profile preview
 npm run lint               # runs expo lint (ESLint 9 flat config)
 ```
 
-> `family_expenses` has a compiled native `android/` directory; the others do not. Prefer `expo run:android` only for `family_expenses`.
+> `family_expenses` uses native modules (expo-sqlite, secure-store, notifications) — use a dev build (`expo run:android` / EAS), not Expo Go.
+> Its sync server lives in `family_expenses/server` (`npm test`, `npm run test:client`, `docker compose up -d --build`).
 
 ---
 
 ## State Management Pattern
 
-All three apps use **React Context + AsyncStorage** — no Redux/Zustand/MobX.
+`daily-accounting` and `loan_management` use **React Context + AsyncStorage**; `family_expenses` uses **expo-sqlite** (see below). No Redux/Zustand/MobX.
 
 Every store follows the same shape:
 ```tsx
@@ -86,11 +87,14 @@ Import `callKw` from `./odooClient`, follow the typed pattern in `services/odooA
 - **Upsert logic**: `searchTodayEntry()` checks for an existing `draft` entry for the same category + date; if found, it accumulates the amount instead of creating a duplicate.
 - Local categories use **negative integer IDs** (`categoryIsLocal: true`). On sync, they are matched by name or created in Odoo before the entry is posted.
 
-### family_expenses — optimistic UI + Supabase Realtime (`context/AppContext.tsx`)
-- Mutations dispatch to local state immediately (temp `tmp-${Date.now()}` ID), then call Supabase.
-- Network errors queue the write to `@family_expenses:write_queue`; real API errors roll back.
-- Supabase Realtime channel per household: `supabase.channel('app_data:<householdId>')` drives live updates.
+### family_expenses — SQLite source of truth + outbox sync
+- `db/database.ts` opens `family.db` (expo-sqlite); **every screen reads from SQLite**, so a cold start offline works.
+- Mutations go through `db/repo.ts` `save()` / `remove()`: row write + `outbox` op in **one transaction**, then the sync engine pushes.
+- `services/syncEngine.ts`: push outbox → `POST /sync/push`, then `GET /sync/pull?since=<cursor>`; triggers on reconnect (NetInfo), foreground, every 60 s, after writes; exponential backoff. Rejected ops become `failed` (shown in `app/sync-queue.tsx`).
+- Records use **client-generated UUIDs** (`utils/ids.ts` `newId`). Budgets and recurring instances use **deterministic ids** (`stableId`) so offline duplicates from two phones merge on the server. Budgets are "removed" by setting amount 0 (server deletes are final).
+- Server conflict rule: last-write-wins on `clientUpdatedAt`; deletes (tombstones) always win.
 - `splits: SplitEntry[] | null` — `null` means the payer owns 100% (no balance impact). Always check for null before computing shares.
+- Login is phone + name (no password). An existing phone in a family must also give that family's invite code.
 
 ### loan_management — read cache + manual sync
 - `cacheStore.tsx` holds a read-only snapshot (invoices, schedules, due lines) refreshed every 5 minutes or on demand via `refreshAll()`.
@@ -101,15 +105,9 @@ Import `callKw` from `./odooClient`, follow the typed pattern in `services/odooA
 
 ## Key Configuration
 
-### family_expenses — Supabase credentials
-Must be set as `EXPO_PUBLIC_` env vars (inlined at build time by Metro):
-```
-EXPO_PUBLIC_SUPABASE_URL=...
-EXPO_PUBLIC_SUPABASE_ANON_KEY=...
-```
-Set these in `eas.json` build profiles (not in a `.env` file — Metro's env injection reads only `EXPO_PUBLIC_` prefixed vars at bundle time). The app detects missing credentials at startup via `supabaseMisconfigured` in `services/supabase.ts`.
-
-Database schema must be applied manually once: Supabase Dashboard → SQL Editor → `supabase/migrations/001_initial_schema.sql`.
+### family_expenses — API server
+Set `EXPO_PUBLIC_API_URL` in `eas.json` build profiles (inlined at build time), or enter it in-app under Login → Server settings (stored in SQLite meta `apiUrl`).
+Server deploy, env and the one-time Supabase import: see `family_expenses/server/README.md`.
 
 ### loan_management — Twilio SMS
 Configured in the in-app Settings screen (stored in AsyncStorage key `loan_management_odoo_settings`). Credentials are sent directly from the mobile client to Twilio's REST API (`services/twilioSms.ts`). SMS fires only when `smsEnabled: true` and all three Twilio fields are non-empty.
@@ -122,7 +120,11 @@ Configured in the in-app Settings screen (stored in AsyncStorage key `loan_manag
 |---|---|
 | `daily-accounting/store/queueStore.tsx` | Offline queue — core sync logic |
 | `daily-accounting/types/odoo.ts` | Canonical Odoo type definitions for this app |
-| `family_expenses/context/AppContext.tsx` | All expense/settlement mutations + Realtime wiring |
+| `family_expenses/context/AppContext.tsx` | `useApp()` data + mutations; `AppProvider` runs recurring generation & budget alerts |
+| `family_expenses/services/syncEngine.ts` | Offline outbox push/pull sync |
+| `family_expenses/db/repo.ts` | SQLite writes + outbox, pull application |
+| `family_expenses/utils/insights.ts` | Spending analysis cards (Statistics tab) |
+| `family_expenses/server/` | Hono + Postgres sync API (auth, households, push/pull) |
 | `family_expenses/utils/balance.ts` | Balance & debt minimisation algorithm |
 | `family_expenses/types/index.ts` | All shared TypeScript interfaces |
 | `loan_management/store/cacheStore.tsx` | 5-minute auto-refresh read cache |

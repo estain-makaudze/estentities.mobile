@@ -1,65 +1,24 @@
 import { Tabs } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
+import { TabBar } from "../../components/TabBar";
+import { useTheme } from "../../theme";
 
-export default function TabsLayout() {
+export default function TabLayout() {
+  const { c } = useTheme();
   return (
     <Tabs
-      screenOptions={{
-        tabBarActiveTintColor: "#4A90D9",
-        tabBarInactiveTintColor: "#8E8E93",
-        headerStyle: { backgroundColor: "#4A90D9" },
-        headerTintColor: "#fff",
-        headerTitleStyle: { fontWeight: "bold" },
-      }}
+      tabBar={(props) => <TabBar {...props} />}
+      backBehavior="history"
+      screenOptions={{ headerShown: false, sceneStyle: { backgroundColor: c.bg } }}
     >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: "Dashboard",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="home" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="expenses"
-        options={{
-          title: "Expenses",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="receipt" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="settlements"
-        options={{
-          title: "Settlements",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="swap-horizontal" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="household"
-        options={{
-          title: "Household",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="people" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="settings"
-        options={{
-          title: "Settings",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="settings" size={size} color={color} />
-          ),
-        }}
-      />
-      {/* users.tsx is kept for backward-compat deep links but not shown in tab bar */}
+      <Tabs.Screen name="index" options={{ title: "Home" }} />
+      <Tabs.Screen name="stats" options={{ title: "Statistics" }} />
+      <Tabs.Screen name="budgets" options={{ title: "Budgets" }} />
+      <Tabs.Screen name="household" options={{ title: "Family" }} />
+      {/* Reachable from Home / Family but not shown in the tab bar */}
+      <Tabs.Screen name="expenses" options={{ title: "Transactions" }} />
+      <Tabs.Screen name="settlements" options={{ title: "Balances" }} />
+      <Tabs.Screen name="settings" options={{ title: "Categories" }} />
       <Tabs.Screen name="users" options={{ href: null }} />
     </Tabs>
   );
 }
-

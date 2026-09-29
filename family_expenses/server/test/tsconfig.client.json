@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "expo-sqlite": ["./client-mocks/expo-sqlite.ts"],
+      "expo-secure-store": ["./client-mocks/expo-secure-store.ts"],
+      "expo-crypto": ["./client-mocks/expo-crypto.ts"],
+      "@react-native-community/netinfo": ["./client-mocks/netinfo.ts"],
+      "react-native": ["./client-mocks/react-native.ts"]
+    }
+  }
+}

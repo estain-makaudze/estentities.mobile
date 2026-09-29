@@ -1,348 +1,128 @@
-import React from "react";
-import {
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-  ActivityIndicator,
-} from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import React, { useMemo } from "react";
+import { Pressable, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { SyncBanner } from "../../components/SyncBanner";
+import { TransactionRow } from "../../components/TransactionRow";
+import { Avatar, Card, EmptyState, Money, ProgressBar, QuickAction, Screen, SectionHeader, T } from "../../components/ui";
 import { useApp } from "../../context/AppContext";
 import { useAuth } from "../../context/AuthContext";
 import { useHousehold } from "../../context/HouseholdContext";
-import { computeNetBalances, computeDebtSummary } from "../../utils/balance";
+import { useDataVersion } from "../../db/events";
+import { allExpenses, allSettlements, recentActivity, totalBetween } from "../../db/queries";
+import { radius, useTheme } from "../../theme";
+import { computeNetBalances } from "../../utils/balance";
+import { monthKey, monthRange, today } from "../../utils/dates";
+import { formatMoney } from "../../utils/format";
 
-export default function DashboardScreen() {
-  const { state } = useApp();
-  const { profile, logout } = useAuth();
-  const { members, household } = useHousehold();
+export default function HomeScreen() {
   const router = useRouter();
-  const { expenses, settlements, loaded } = state;
+  const insets = useSafeAreaInsets();
+  const { c } = useTheme();
+  const { user, userId } = useAuth();
+  const { household, members, currency } = useHousehold();
+  const { budgets } = useApp();
+  const version = useDataVersion();
+  const hh = household?.id ?? "";
 
-  if (!loaded) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color="#4A90D9" />
-      </View>
-    );
-  }
+  const data = useMemo(() => {
+    void version;
+    const month = monthKey(today());
+    const { from, to } = monthRange(month);
+    const spent = totalBetween(hh, from, to);
+    const balances = computeNetBalances(allExpenses(hh), allSettlements(hh), members.map((m) => m.id));
+    return { spent, myBalance: userId ? balances[userId] ?? 0 : 0, recent: recentActivity(hh, 8) };
+  }, [hh, members, userId, version]);
 
-  const users = members;
-
-  if (users.length === 0) {
-    return (
-      <View style={styles.center}>
-        <Text style={styles.emptyIcon}>👨‍👩‍👧‍👦</Text>
-        <Text style={styles.emptyTitle}>Welcome to {household?.name ?? "Family Expenses"}</Text>
-        <Text style={styles.emptySubtitle}>
-          Invite family members using the invite code on the Household tab.
-        </Text>
-        <TouchableOpacity
-          style={styles.ctaButton}
-          onPress={() => router.push("/(tabs)/household")}
-        >
-          <Text style={styles.ctaButtonText}>View Household</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
-  const userIds = users.map((u) => u.id);
-  const balances = computeNetBalances(expenses, settlements, userIds);
-  const debts = computeDebtSummary(balances);
-
-  // This-month filter
-  const now = new Date();
-  const thisMonthExpenses = expenses.filter((e) => {
-    const d = new Date(e.date);
-    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
-  });
-  const thisMonthTotal = thisMonthExpenses.reduce((s, e) => s + e.amount, 0);
-  const monthLabel = now.toLocaleString("default", { month: "long", year: "numeric" });
-
-  const getUserName = (id: string) =>
-    users.find((u) => u.id === id)?.name ?? "Unknown";
-  const getUserColor = (id: string) =>
-    users.find((u) => u.id === id)?.color ?? "#888";
-
-  // Match the logged-in user by their Supabase user ID.
-  const currentUser = profile ? users.find((u) => u.id === profile.id) : null;
-  const myDebts = currentUser
-    ? debts.filter((d) => d.fromUserId === currentUser.id)
-    : [];
-  const myCredits = currentUser
-    ? debts.filter((d) => d.toUserId === currentUser.id)
-    : [];
-
-  const handleLogout = async () => {
-    await logout();
-    router.replace("/login");
-  };
+  const totalBudget = budgets.find((b) => b.categoryId === null)?.amount ?? null;
+  const firstName = user?.name.split(" ")[0] ?? "there";
+  const bal = data.myBalance;
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Greeting + logout */}
-      <View style={styles.greetingRow}>
-        <View>
-          <Text style={styles.greeting}>Hello, {profile?.name ?? "there"} 👋</Text>
-          <Text style={styles.greetingSub}>{profile?.email}</Text>
+    <Screen bottomInset={110}>
+      <View style={{ paddingTop: insets.top + 12, flexDirection: "row", alignItems: "center", gap: 12 }}>
+        <Avatar name={user?.name ?? "?"} color={user?.color ?? c.primary} size={48} />
+        <View style={{ flex: 1 }}>
+          <T variant="caption">Hello</T>
+          <T variant="h1" numberOfLines={1}>{firstName}</T>
         </View>
-        <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
-          <Text style={styles.logoutBtnText}>Sign Out</Text>
-        </TouchableOpacity>
+        <Pressable hitSlop={10} onPress={() => router.push("/(tabs)/household")}>
+          <View style={{ backgroundColor: c.card, borderRadius: radius.pill, paddingHorizontal: 12, paddingVertical: 6 }}>
+            <T variant="caption" color={c.ink} numberOfLines={1} style={{ maxWidth: 130 }}>{household?.name}</T>
+          </View>
+        </Pressable>
       </View>
 
-      {/* Summary card */}
-      <View style={styles.summaryCard}>
-        <Text style={styles.summaryLabel}>{monthLabel} Expenses</Text>
-        <Text style={styles.summaryAmount}>${thisMonthTotal.toFixed(2)}</Text>
-        <Text style={styles.summaryMeta}>
-          {thisMonthExpenses.length} expense{thisMonthExpenses.length !== 1 ? "s" : ""} · {users.length}{" "}
-          {users.length !== 1 ? "people" : "person"}
-        </Text>
+      <View style={{ marginTop: 16 }}>
+        <SyncBanner />
       </View>
 
-      {/* MY balances section */}
-      {currentUser && (
-        <>
-          <Text style={styles.sectionTitle}>My Balance</Text>
-          {myDebts.length === 0 && myCredits.length === 0 ? (
-            <View style={styles.settledBadge}>
-              <Text style={styles.settledText}>✅ You are all settled up!</Text>
-            </View>
-          ) : (
-            <>
-              {myDebts.map((debt, i) => (
-                <View key={"owe-" + i} style={styles.myDebtCard}>
-                  <View style={styles.myDebtRow}>
-                    <Text style={styles.myDebtEmoji}>💸</Text>
-                    <View style={styles.myDebtMiddle}>
-                      <Text style={styles.myDebtLabel}>
-                        You owe{" "}
-                        <Text style={styles.myDebtName}>
-                          {getUserName(debt.toUserId)}
-                        </Text>
-                      </Text>
-                    </View>
-                    <Text style={styles.myDebtAmount}>
-                      ${debt.amount.toFixed(2)}
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    style={styles.settleButton}
-                    onPress={() =>
-                      router.push({
-                        pathname: "/add-settlement",
-                        params: {
-                          fromUserId: debt.fromUserId,
-                          toUserId: debt.toUserId,
-                          suggestedAmount: debt.amount.toFixed(2),
-                        },
-                      })
-                    }
-                  >
-                    <Text style={styles.settleButtonText}>Pay Now</Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
-              {myCredits.map((debt, i) => (
-                <View key={"credit-" + i} style={[styles.myDebtCard, styles.myDebtCardCredit]}>
-                  <View style={styles.myDebtRow}>
-                    <Text style={styles.myDebtEmoji}>💰</Text>
-                    <View style={styles.myDebtMiddle}>
-                      <Text style={styles.myDebtLabel}>
-                        <Text style={styles.myDebtName}>
-                          {getUserName(debt.fromUserId)}
-                        </Text>{" "}
-                        owes you
-                      </Text>
-                    </View>
-                    <Text style={[styles.myDebtAmount, styles.myDebtAmountCredit]}>
-                      ${debt.amount.toFixed(2)}
-                    </Text>
-                  </View>
-                </View>
-              ))}
-            </>
-          )}
-        </>
-      )}
-
-      {/* Per-user net balances */}
-      <Text style={styles.sectionTitle}>Total Balance</Text>
-      {users.map((user) => {
-        const bal = balances[user.id] ?? 0;
-        const isPositive = bal > 0.009;
-        const isNegative = bal < -0.009;
-        return (
-          <View key={user.id} style={styles.userRow}>
-            <View style={[styles.avatar, { backgroundColor: user.color }]}>
-              <Text style={styles.avatarText}>{(user.name || "?")[0].toUpperCase()}</Text>
-            </View>
-            <Text style={styles.userName}>{user.name}</Text>
-            <View style={styles.balancePill(isPositive, isNegative)}>
-              <Text style={styles.balancePillText(isPositive, isNegative)}>
-                {isPositive ? "+" : ""}
-                {isNegative ? "-" : ""}
-                {isPositive || isNegative ? `$${Math.abs(bal).toFixed(2)}` : "Settled ✅"}
-              </Text>
-            </View>
+      {/* Headline */}
+      <View style={{ alignItems: "center", marginTop: 12 }}>
+        <T variant="caption">Family spending this month</T>
+        <Money amount={data.spent} currency={currency} variant="display" style={{ marginTop: 6 }} />
+        {totalBudget ? (
+          <View style={{ width: "70%", marginTop: 12, gap: 6 }}>
+            <ProgressBar ratio={data.spent / totalBudget} />
+            <T variant="caption" style={{ textAlign: "center" }}>
+              {data.spent <= totalBudget
+                ? `${formatMoney(totalBudget - data.spent, currency)} left of ${formatMoney(totalBudget, currency)}`
+                : `${formatMoney(data.spent - totalBudget, currency)} over the ${formatMoney(totalBudget, currency)} budget`}
+            </T>
           </View>
-        );
-      })}
-
-      {/* All settlements needed */}
-      <Text style={styles.sectionTitle}>Who Owes Whom</Text>
-      {debts.length === 0 ? (
-        <View style={styles.settledBadge}>
-          <Text style={styles.settledText}>✅ All settled up!</Text>
-        </View>
-      ) : (
-        debts.map((debt, i) => (
-          <View key={i} style={styles.debtCard}>
-            <View style={styles.debtRow}>
-              <View
-                style={[
-                  styles.debtAvatar,
-                  { backgroundColor: getUserColor(debt.fromUserId) },
-                ]}
-              >
-                <Text style={styles.avatarText}>
-                  {getUserName(debt.fromUserId)[0].toUpperCase()}
-                </Text>
-              </View>
-              <View style={styles.debtMiddle}>
-                <Text style={styles.debtLabel}>
-                  <Text style={styles.debtName}>
-                    {getUserName(debt.fromUserId)}
-                  </Text>
-                  {" owes "}
-                  <Text style={styles.debtName}>
-                    {getUserName(debt.toUserId)}
-                  </Text>
-                </Text>
-                <Text style={styles.debtAmount}>${debt.amount.toFixed(2)}</Text>
-              </View>
-              <View
-                style={[
-                  styles.debtAvatar,
-                  { backgroundColor: getUserColor(debt.toUserId) },
-                ]}
-              >
-                <Text style={styles.avatarText}>
-                  {getUserName(debt.toUserId)[0].toUpperCase()}
-                </Text>
-              </View>
-            </View>
-            <TouchableOpacity
-              style={styles.settleButton}
-              onPress={() =>
-                router.push({
-                  pathname: "/add-settlement",
-                  params: {
-                    fromUserId: debt.fromUserId,
-                    toUserId: debt.toUserId,
-                    suggestedAmount: debt.amount.toFixed(2),
-                  },
-                })
-              }
-            >
-              <Text style={styles.settleButtonText}>Record Settlement</Text>
-            </TouchableOpacity>
-          </View>
-        ))
-      )}
+        ) : (
+          <Pressable onPress={() => router.push({ pathname: "/budget-form", params: { category: "total" } })}>
+            <T variant="caption" color={c.primary} style={{ marginTop: 8 }}>+ Set a monthly budget</T>
+          </Pressable>
+        )}
+      </View>
 
       {/* Quick actions */}
-      <Text style={styles.sectionTitle}>Quick Actions</Text>
-      <View style={styles.quickActions}>
-        <TouchableOpacity
-          style={[styles.quickBtn, { backgroundColor: "#4A90D9" }]}
-          onPress={() => router.push("/add-expense")}
-        >
-          <Text style={styles.quickBtnText}>+ Add Expense</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.quickBtn, { backgroundColor: "#2ECC71" }]}
-          onPress={() => router.push("/add-settlement")}
-        >
-          <Text style={styles.quickBtnText}>+ Record Payment</Text>
-        </TouchableOpacity>
+      <View style={{ flexDirection: "row", marginTop: 28 }}>
+        <QuickAction icon="add-circle-outline" label="Expense" onPress={() => router.push("/add-expense")} />
+        <QuickAction icon="swap-horizontal" label="Settle up" onPress={() => router.push("/add-settlement")} />
+        <QuickAction icon="repeat" label="Bills" onPress={() => router.push("/recurring")} />
+        <QuickAction icon="grid-outline" label="More" onPress={() => router.push("/(tabs)/settings")} />
       </View>
-    </ScrollView>
+
+      {/* My balance */}
+      {members.length > 1 && (
+        <Pressable onPress={() => router.push("/(tabs)/settlements")}>
+          <Card style={{ marginTop: 24, flexDirection: "row", alignItems: "center", gap: 12 }}>
+            <View
+              style={{
+                width: 44, height: 44, borderRadius: 14, alignItems: "center", justifyContent: "center",
+                backgroundColor: Math.abs(bal) < 0.01 ? c.cardAlt : bal > 0 ? c.successSoft : c.dangerSoft,
+              }}
+            >
+              <Ionicons
+                name={Math.abs(bal) < 0.01 ? "checkmark" : bal > 0 ? "arrow-down" : "arrow-up"}
+                size={22}
+                color={Math.abs(bal) < 0.01 ? c.sub : bal > 0 ? c.success : c.danger}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <T variant="caption">{Math.abs(bal) < 0.01 ? "All settled" : bal > 0 ? "You are owed" : "You owe"}</T>
+              <Money amount={Math.abs(bal)} currency={currency} variant="h2" />
+            </View>
+            <T variant="caption" color={c.primary}>Balances ›</T>
+          </Card>
+        </Pressable>
+      )}
+
+      <SectionHeader title="Last Transactions" action="See All" onAction={() => router.push("/(tabs)/expenses")} />
+      <Card style={{ paddingVertical: 6 }}>
+        {data.recent.length === 0 ? (
+          <EmptyState
+            icon="receipt-outline"
+            title="No expenses yet"
+            body="Tap + to add your first family expense. It's saved on this phone right away."
+          />
+        ) : (
+          data.recent.map((a) => <TransactionRow key={a.item.id} activity={a} />)
+        )}
+      </Card>
+    </Screen>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F2F2F7" },
-  content: { padding: 16, paddingBottom: 40 },
-  center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
-  emptyIcon: { fontSize: 64, marginBottom: 16 },
-  emptyTitle: { fontSize: 22, fontWeight: "700", color: "#1C1C1E", marginBottom: 8, textAlign: "center" },
-  emptySubtitle: { fontSize: 15, color: "#6C6C70", textAlign: "center", marginBottom: 24, lineHeight: 22 },
-  ctaButton: { backgroundColor: "#4A90D9", borderRadius: 12, paddingVertical: 14, paddingHorizontal: 32 },
-  ctaButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-
-  greetingRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 16 },
-  greeting: { fontSize: 20, fontWeight: "700", color: "#1C1C1E" },
-  greetingSub: { fontSize: 13, color: "#6C6C70", marginTop: 2 },
-  logoutBtn: { backgroundColor: "#FFF0F0", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 },
-  logoutBtnText: { color: "#E74C3C", fontSize: 13, fontWeight: "600" },
-
-  summaryCard: { backgroundColor: "#4A90D9", borderRadius: 16, padding: 24, alignItems: "center", marginBottom: 24 },
-  summaryLabel: { color: "rgba(255,255,255,0.8)", fontSize: 14, marginBottom: 4 },
-  summaryAmount: { color: "#fff", fontSize: 40, fontWeight: "800" },
-  summaryMeta: { color: "rgba(255,255,255,0.7)", fontSize: 13, marginTop: 4 },
-
-  sectionTitle: { fontSize: 17, fontWeight: "700", color: "#1C1C1E", marginTop: 8, marginBottom: 10 },
-
-  myDebtCard: {
-    backgroundColor: "#FFF6F0", borderRadius: 12, padding: 14, marginBottom: 8,
-    borderLeftWidth: 4, borderLeftColor: "#E74C3C",
-  },
-  myDebtCardCredit: { backgroundColor: "#F0FFF6", borderLeftColor: "#2ECC71" },
-  myDebtRow: { flexDirection: "row", alignItems: "center" },
-  myDebtEmoji: { fontSize: 24, marginRight: 12 },
-  myDebtMiddle: { flex: 1 },
-  myDebtLabel: { fontSize: 15, color: "#1C1C1E" },
-  myDebtName: { fontWeight: "700" },
-  myDebtAmount: { fontSize: 20, fontWeight: "800", color: "#E74C3C" },
-  myDebtAmountCredit: { color: "#2ECC71" },
-
-  infoBox: { backgroundColor: "#EAF4FF", borderRadius: 10, padding: 14, marginBottom: 8 },
-  infoText: { fontSize: 13, color: "#4A90D9", lineHeight: 18 },
-
-  userRow: { flexDirection: "row", alignItems: "center", backgroundColor: "#fff", borderRadius: 12, padding: 12, marginBottom: 8 },
-  avatar: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", marginRight: 12 },
-  avatarText: { color: "#fff", fontWeight: "700", fontSize: 16 },
-  userName: { flex: 1, fontSize: 16, color: "#1C1C1E" },
-  balancePill: (positive: boolean, negative: boolean) => ({
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 20,
-    backgroundColor: positive ? "#E8FAF0" : negative ? "#FFF0F0" : "#F2F2F7",
-  }),
-  balancePillText: (positive: boolean, negative: boolean) => ({
-    fontSize: 14,
-    fontWeight: "700" as const,
-    color: positive ? "#2ECC71" : negative ? "#E74C3C" : "#6C6C70",
-  }),
-
-  settledBadge: { backgroundColor: "#E8FAF0", borderRadius: 12, padding: 16, alignItems: "center", marginBottom: 8 },
-  settledText: { fontSize: 16, color: "#2ECC71", fontWeight: "600" },
-
-  debtCard: { backgroundColor: "#fff", borderRadius: 12, padding: 16, marginBottom: 10 },
-  debtRow: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
-  debtAvatar: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
-  debtMiddle: { flex: 1, alignItems: "center" },
-  debtLabel: { fontSize: 14, color: "#6C6C70", textAlign: "center" },
-  debtName: { fontWeight: "700", color: "#1C1C1E" },
-  debtAmount: { fontSize: 22, fontWeight: "800", color: "#E74C3C", marginTop: 2 },
-  settleButton: { backgroundColor: "#E8FAF0", borderRadius: 8, padding: 10, alignItems: "center" },
-  settleButtonText: { color: "#2ECC71", fontWeight: "600", fontSize: 14 },
-
-  quickActions: { flexDirection: "row", gap: 12, marginTop: 4 },
-  quickBtn: { flex: 1, borderRadius: 12, padding: 14, alignItems: "center" },
-  quickBtnText: { color: "#fff", fontSize: 15, fontWeight: "600" },
-});

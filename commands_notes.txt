@@ -19,7 +19,7 @@ npm run reset-project
 
     #generate metro.config.js file at the root of the project with the following content
     npx expo customize metro.config.js
-
+c
     #add import './global.css'; to the top of the root layout.tsx file
 
     #create a file called tailwind.d.ts at the root of the project with the following content
