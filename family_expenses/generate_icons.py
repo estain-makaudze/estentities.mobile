@@ -1,200 +1,160 @@
 """
 Generate all app icons for family_expenses.
-Design: deep-blue gradient background · white house · gold coin with $
+
+Design (matches the in-app design system): royal-blue gradient tile, a white
+rounded roof chevron sheltering three rising bars — home + money + statistics —
+with the tallest bar in warm gold as the accent.
+
+Vector-drawn with pycairo (crisp anti-aliasing), composited with Pillow.
+Run:  python3 generate_icons.py
 """
-from PIL import Image, ImageDraw, ImageFont
-import os, math
+import math
+import os
+
+import cairo
+from PIL import Image, ImageFilter
 
 ASSETS = os.path.join(os.path.dirname(__file__), "assets", "images")
 
-# ── colour palette ────────────────────────────────────────────────────────────
-BG_TOP    = (18,  80, 160)   # deep navy-blue
-BG_BOT    = (66, 148, 222)   # sky blue
-WHITE     = (255, 255, 255, 255)
-WIN_BLUE  = (160, 210, 255, 255)   # window glass
-DOOR_COL  = (180, 230, 255, 255)
-COIN_RING = (210, 150,   5, 255)
-COIN_FACE = (255, 195,  25, 255)
-COIN_SYM  = (140,  90,   0, 255)
-
-# ── helpers ───────────────────────────────────────────────────────────────────
-
-def lerp(a, b, t):
-    return int(a + (b - a) * t)
-
-def make_gradient(size, c1=BG_TOP, c2=BG_BOT):
-    """Diagonal (top-left → bottom-right) gradient, fast via 2×2 scale."""
-    tiny = Image.new("RGBA", (2, 2))
-    mid  = (lerp(c1[0],c2[0],.5), lerp(c1[1],c2[1],.5), lerp(c1[2],c2[2],.5), 255)
-    tiny.putdata([(*c1,255), mid, mid, (*c2,255)])
-    return tiny.resize((size, size), Image.BILINEAR)
-
-def apply_rounded_corners(img, radius):
-    mask = Image.new("L", img.size, 0)
-    ImageDraw.Draw(mask).rounded_rectangle(
-        [0, 0, img.width-1, img.height-1], radius=radius, fill=255
-    )
-    out = img.copy().convert("RGBA")
-    out.putalpha(mask)
-    return out
-
-def find_bold_font(size):
-    candidates = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-        "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
-        "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
-    ]
-    for p in candidates:
-        if os.path.exists(p):
-            return ImageFont.truetype(p, size)
-    return ImageFont.load_default()
-
-# ── core drawing ──────────────────────────────────────────────────────────────
-
-def draw_house_layer(size, house_col=WHITE, win_col=WIN_BLUE, door_col=DOOR_COL):
-    """
-    Returns an RGBA canvas (transparent background) with:
-      - a house (roof + body + chimney + windows + door)
-      - a gold coin bottom-right
-    All coordinates are proportional so it scales to any square size.
-    """
-    s  = size
-    img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    d   = ImageDraw.Draw(img)
-
-    cx = s // 2
-    # ── house geometry ────────────────────────────────────────────────────────
-    body_w      = int(s * 0.52)
-    body_h      = int(s * 0.30)
-    house_bot   = int(s * 0.74)
-    body_top    = house_bot - body_h
-    body_left   = cx - body_w // 2
-    body_right  = cx + body_w // 2
-
-    roof_half_w = int(s * 0.36)
-    roof_top_y  = int(s * 0.20)
-
-    # body
-    d.rectangle([body_left, body_top, body_right, house_bot], fill=house_col)
-
-    # roof triangle
-    d.polygon([
-        (cx, roof_top_y),
-        (cx - roof_half_w, body_top),
-        (cx + roof_half_w, body_top),
-    ], fill=house_col)
-
-    # chimney
-    ch_w  = int(s * 0.06)
-    ch_x  = cx + int(s * 0.14)
-    ch_y1 = roof_top_y + int(s * 0.07)
-    ch_y2 = body_top + 2
-    d.rectangle([ch_x, ch_y1, ch_x + ch_w, ch_y2], fill=house_col)
-
-    # ── door ─────────────────────────────────────────────────────────────────
-    door_w = int(s * 0.11)
-    door_h = int(s * 0.17)
-    door_x = cx - door_w // 2
-    door_y = house_bot - door_h
-    # rounded top
-    d.rectangle([door_x, door_y + door_w//2, door_x + door_w, house_bot], fill=door_col)
-    d.ellipse([door_x, door_y, door_x + door_w, door_y + door_w], fill=door_col)
-
-    # ── windows ──────────────────────────────────────────────────────────────
-    win_s  = int(s * 0.09)
-    win_y  = body_top + int(s * 0.05)
-    gap    = int(s * 0.06)
-    for wx in [body_left + gap, body_right - gap - win_s]:
-        # window frame (house colour)
-        frame = 3
-        d.rectangle([wx-frame, win_y-frame, wx+win_s+frame, win_y+win_s+frame], fill=house_col)
-        # glass
-        d.rectangle([wx, win_y, wx+win_s, win_y+win_s], fill=win_col)
-        # cross bars
-        mid_x = wx + win_s // 2
-        mid_y = win_y + win_s // 2
-        d.rectangle([mid_x-1, win_y, mid_x+1, win_y+win_s], fill=house_col)
-        d.rectangle([wx, mid_y-1, wx+win_s, mid_y+1],       fill=house_col)
-
-    # ── gold coin ────────────────────────────────────────────────────────────
-    coin_cx = cx + int(s * 0.22)
-    coin_cy = house_bot - int(s * 0.10)
-    coin_r  = int(s * 0.13)
-
-    # ring shadow
-    shadow_off = max(2, coin_r // 12)
-    d.ellipse([
-        coin_cx - coin_r + shadow_off, coin_cy - coin_r + shadow_off,
-        coin_cx + coin_r + shadow_off, coin_cy + coin_r + shadow_off,
-    ], fill=(0, 0, 0, 60))
-
-    # outer ring
-    d.ellipse([coin_cx-coin_r, coin_cy-coin_r, coin_cx+coin_r, coin_cy+coin_r],
-              fill=COIN_RING)
-    # inner face
-    ir = int(coin_r * 0.80)
-    d.ellipse([coin_cx-ir, coin_cy-ir, coin_cx+ir, coin_cy+ir], fill=COIN_FACE)
-
-    # "$" symbol
-    font_size = int(ir * 1.15)
-    font = find_bold_font(font_size)
-    bb   = d.textbbox((0, 0), "$", font=font)
-    tw, th = bb[2]-bb[0], bb[3]-bb[1]
-    d.text(
-        (coin_cx - tw//2 - bb[0], coin_cy - th//2 - bb[1]),
-        "$", font=font, fill=COIN_SYM
-    )
-
-    return img
+BG_A = (0x55, 0x60, 0xFF)   # top-left
+BG_B = (0x1C, 0x24, 0xB0)   # bottom-right
+WHITE = (1, 1, 1)
+GOLD_TOP = (0xFF, 0xD5, 0x6B)
+GOLD_BOT = (0xFF, 0xA9, 0x2E)
 
 
-def build_icon(size, rounded=False):
-    bg    = make_gradient(size)
-    house = draw_house_layer(size)
-    out   = bg.copy()
-    out.paste(house, (0, 0), house)
-    if rounded:
-        out = apply_rounded_corners(out, radius=int(size * 0.22))
+def rgb(c, a=1.0):
+    return (c[0] / 255, c[1] / 255, c[2] / 255, a)
+
+
+def to_pil(surface):
+    """cairo ARGB32 (premultiplied BGRA) → PIL RGBA."""
+    w, h = surface.get_width(), surface.get_height()
+    img = Image.frombuffer("RGBA", (w, h), bytes(surface.get_data()), "raw", "BGRa", 0, 1)
+    return img.copy()
+
+
+def rounded_rect(ctx, x, y, w, h, r):
+    ctx.new_sub_path()
+    ctx.arc(x + w - r, y + r, r, -math.pi / 2, 0)
+    ctx.arc(x + w - r, y + h - r, r, 0, math.pi / 2)
+    ctx.arc(x + r, y + h - r, r, math.pi / 2, math.pi)
+    ctx.arc(x + r, y + r, r, math.pi, 3 * math.pi / 2)
+    ctx.close_path()
+
+
+# ── layers ────────────────────────────────────────────────────────────────────
+
+def background(size, radius=0.0):
+    surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, size, size)
+    ctx = cairo.Context(surf)
+    if radius:
+        rounded_rect(ctx, 0, 0, size, size, size * radius)
+        ctx.clip()
+    grad = cairo.LinearGradient(0, 0, size, size)
+    grad.add_color_stop_rgba(0, *rgb(BG_A))
+    grad.add_color_stop_rgba(1, *rgb(BG_B))
+    ctx.set_source(grad)
+    ctx.paint()
+    # soft light from the top-left
+    glow = cairo.RadialGradient(size * 0.22, size * 0.12, 0, size * 0.22, size * 0.12, size * 0.85)
+    glow.add_color_stop_rgba(0, 1, 1, 1, 0.22)
+    glow.add_color_stop_rgba(1, 1, 1, 1, 0)
+    ctx.set_source(glow)
+    ctx.paint()
+    # faint decorative ring, bottom-right
+    ctx.set_source_rgba(1, 1, 1, 0.07)
+    ctx.set_line_width(size * 0.05)
+    ctx.arc(size * 0.98, size * 1.02, size * 0.42, 0, 2 * math.pi)
+    ctx.stroke()
+    return to_pil(surf)
+
+
+def mark(size, scale=1.0, mono=False):
+    """Roof + three bars, on a transparent canvas. Geometry is on a 1024 grid."""
+    surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, size, size)
+    ctx = cairo.Context(surf)
+    k = size / 1024
+    ctx.scale(k, k)
+    # centre the mark (its visual centre is ~ (512, 505) on the grid)
+    ctx.translate(512, 512)
+    ctx.scale(scale, scale)
+    ctx.translate(-512, -505)
+
+    # roof chevron
+    ctx.set_source_rgba(*WHITE, 1)
+    ctx.set_line_width(74)
+    ctx.set_line_cap(cairo.LINE_CAP_ROUND)
+    ctx.set_line_join(cairo.LINE_JOIN_ROUND)
+    ctx.move_to(262, 478)
+    ctx.line_to(512, 268)
+    ctx.line_to(762, 478)
+    ctx.stroke()
+
+    # rising bars
+    bw, base = 86, 772
+    bars = [(392, 150), (512, 225), (632, 300)]
+    for i, (cx, h) in enumerate(bars):
+        x, y = cx - bw / 2, base - h
+        rounded_rect(ctx, x, y, bw, h, bw / 2)
+        if i == 2 and not mono:
+            g = cairo.LinearGradient(0, y, 0, base)
+            g.add_color_stop_rgba(0, *rgb(GOLD_TOP))
+            g.add_color_stop_rgba(1, *rgb(GOLD_BOT))
+            ctx.set_source(g)
+        else:
+            ctx.set_source_rgba(*WHITE, 1 if (mono or i == 1) else 0.92)
+        ctx.fill()
+    return to_pil(surf)
+
+
+def with_shadow(layer, size, strength=0.28):
+    """Soft drop shadow under the mark for depth."""
+    alpha = layer.split()[3]
+    shadow = Image.new("RGBA", layer.size, (10, 14, 90, 0))
+    shadow.putalpha(alpha.point(lambda a: int(a * strength)))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(size * 0.025))
+    out = Image.new("RGBA", layer.size, (0, 0, 0, 0))
+    out.alpha_composite(shadow, (0, int(size * 0.02)))
+    out.alpha_composite(layer)
     return out
 
 
-# ── generate every asset ─────────────────────────────────────────────────────
+def full_icon(size, radius=0.0, scale=1.0):
+    bg = background(size, radius)
+    m = with_shadow(mark(size, scale), size)
+    if radius:  # keep shadow inside rounded tile
+        m.putalpha(Image.composite(m.split()[3], Image.new("L", m.size, 0), bg.split()[3]))
+    bg.alpha_composite(m)
+    return bg
 
-def save(img, name):
-    path = os.path.join(ASSETS, name)
-    img.save(path)
+
+# ── write assets ──────────────────────────────────────────────────────────────
+
+def save(img, name, out_dir=ASSETS):
+    path = os.path.join(out_dir, name)
+    img.save(path, optimize=True)
     print(f"  ✓  {name}  ({img.width}×{img.height})")
 
-print("\n🎨  Generating icons …\n")
 
-# 1. icon.png  (1024 × 1024)  — flat square; iOS/Android round the corners
-save(build_icon(1024), "icon.png")
+def generate(out_dir=ASSETS):
+    os.makedirs(out_dir, exist_ok=True)
+    print("\n🎨  Generating icons …\n")
+    # iOS / store icon: full-bleed square (the OS applies the corner mask)
+    save(full_icon(1024), "icon.png", out_dir)
+    # Android adaptive: mark must sit inside the central 66% safe zone
+    save(with_shadow(mark(1024, scale=0.84), 1024), "android-icon-foreground.png", out_dir)
+    save(background(1024), "android-icon-background.png", out_dir)
+    save(mark(1024, scale=0.84, mono=True), "android-icon-monochrome.png", out_dir)
+    # Splash: rounded tile on transparent (app.json sets the background colour)
+    splash = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
+    splash.alpha_composite(full_icon(320, radius=0.23), (96, 96))
+    save(splash, "splash-icon.png", out_dir)
+    # Web favicon
+    save(full_icon(64, radius=0.23).resize((64, 64)), "favicon.png", out_dir)
+    print("\n✅  Icons saved to", out_dir, "\n")
 
-# 2. Android adaptive foreground (transparent bg, content inside central 66%)
-save(draw_house_layer(1024), "android-icon-foreground.png")
 
-# 3. Android adaptive background (gradient only)
-save(make_gradient(1024), "android-icon-background.png")
-
-# 4. Android monochrome (white silhouette on transparent)
-save(draw_house_layer(1024,
-     house_col=(255,255,255,255),
-     win_col=(255,255,255,180),
-     door_col=(255,255,255,180)),
-     "android-icon-monochrome.png")
-
-# 5. Splash icon  (512 × 512  — Expo expects a centred icon on white)
-splash = Image.new("RGBA", (512, 512), (255, 255, 255, 255))
-icon_sm = build_icon(300)
-offset  = (512 - 300) // 2
-splash.paste(icon_sm, (offset, offset), icon_sm)
-save(splash, "splash-icon.png")
-
-# 6. Favicon  (64 × 64  — rounded for web)
-save(build_icon(64, rounded=True), "favicon.png")
-
-print("\n✅  All icons saved to", ASSETS, "\n")
-
+if __name__ == "__main__":
+    import sys
+    generate(sys.argv[1] if len(sys.argv) > 1 else ASSETS)

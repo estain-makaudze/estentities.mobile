@@ -1,119 +1,102 @@
+import {
+  Manrope_400Regular, Manrope_500Medium, Manrope_600SemiBold, Manrope_700Bold, Manrope_800ExtraBold, useFonts,
+} from "@expo-google-fonts/manrope";
+import * as Notifications from "expo-notifications";
 import { Stack, useRouter, useSegments } from "expo-router";
-import { useEffect } from "react";
-import { ActivityIndicator, Alert, Text, View } from "react-native";
+import * as SplashScreen from "expo-splash-screen";
+import { StatusBar } from "expo-status-bar";
+import { useEffect, useRef } from "react";
+// Defines the background task at module scope (required by expo-task-manager).
+import "../tasks/background";
 import { AppProvider } from "../context/AppContext";
 import { AuthProvider, useAuth } from "../context/AuthContext";
 import { HouseholdProvider, useHousehold } from "../context/HouseholdContext";
-import { useSync } from "../hooks/useSync";
-import { checkSchema, supabaseMisconfigured } from "../services/supabase";
+import { useTheme } from "../theme";
 
-function SyncRunner() {
-  useSync();
-  return null;
-}
+void SplashScreen.preventAutoHideAsync().catch(() => {});
 
-function SchemaCheck() {
-  useEffect(() => {
-    checkSchema().then((msg) => {
-      if (msg) Alert.alert("Database Setup Required", msg, [{ text: "OK" }]);
-    });
-  }, []);
-  return null;
-}
-
+/** Route guard — reads only local state, so it works offline on a cold start. */
 function AuthGuard() {
-  const { session, loading: authLoading } = useAuth();
-  const { household, loading: householdLoading } = useHousehold();
+  const { ready, userId } = useAuth();
+  const { household } = useHousehold();
   const segments = useSegments();
   const router = useRouter();
 
   useEffect(() => {
-    if (authLoading || householdLoading) return;
-    const inLogin = segments[0] === "login";
-    const inSetup = segments[0] === "household-setup";
-    if (!session) {
+    if (!ready) return;
+    const first = segments[0] as string | undefined;
+    const inLogin = first === "login";
+    const inSetup = first === "household-setup";
+    if (!userId) {
       if (!inLogin) router.replace("/login");
     } else if (!household) {
       if (!inSetup) router.replace("/household-setup");
-    } else {
-      if (inLogin || inSetup) router.replace("/(tabs)");
+    } else if (inLogin || inSetup || !first) {
+      router.replace("/(tabs)");
     }
-  }, [session, authLoading, household, householdLoading, segments]);
+  }, [ready, userId, household, segments, router]);
 
-  if (authLoading || householdLoading) {
-    return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#F2F2F7" }}>
-        <ActivityIndicator size="large" color="#4A90D9" />
-      </View>
-    );
-  }
   return null;
 }
 
+/** Tapping a notification opens its screen (e.g. the daily reminder → New expense). */
+function NotificationRouter() {
+  const router = useRouter();
+  const { userId } = useAuth();
+  const { household } = useHousehold();
+  const response = Notifications.useLastNotificationResponse();
+  const handled = useRef<string | null>(null);
+  useEffect(() => {
+    const id = response?.notification.request.identifier;
+    const url = response?.notification.request.content.data?.url;
+    if (!id || handled.current === id || !userId || !household || typeof url !== "string") return;
+    handled.current = id;
+    setTimeout(() => router.push(url as never), 300);
+  }, [response, userId, household, router]);
+  return null;
+}
+
+function RootStack() {
+  const { c, scheme } = useTheme();
+  const { ready } = useAuth();
+  useEffect(() => {
+    if (ready) void SplashScreen.hideAsync().catch(() => {});
+  }, [ready]);
+
+  const modal = { presentation: "modal" as const, headerShown: false, contentStyle: { backgroundColor: c.bg } };
+  return (
+    <>
+      <StatusBar style={scheme === "dark" ? "light" : "dark"} />
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: c.bg } }}>
+        <Stack.Screen name="index" />
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="login" />
+        <Stack.Screen name="household-setup" />
+        <Stack.Screen name="add-expense" options={modal} />
+        <Stack.Screen name="edit-expense" options={modal} />
+        <Stack.Screen name="add-settlement" options={modal} />
+        <Stack.Screen name="budget-form" options={modal} />
+        <Stack.Screen name="recurring-form" options={modal} />
+        <Stack.Screen name="recurring" />
+        <Stack.Screen name="sync-queue" options={modal} />
+      </Stack>
+      <AuthGuard />
+      <NotificationRouter />
+    </>
+  );
+}
+
 export default function RootLayout() {
-  // If the build is missing Supabase credentials, show a clear error
-  // instead of crashing immediately on startup.
-  if (supabaseMisconfigured) {
-    return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center",
-                     padding: 32, backgroundColor: "#F2F2F7" }}>
-        <Text style={{ fontSize: 48, marginBottom: 16 }}>⚙️</Text>
-        <Text style={{ fontSize: 20, fontWeight: "700", color: "#1C1C1E",
-                       textAlign: "center", marginBottom: 12 }}>
-          Configuration Error
-        </Text>
-        <Text style={{ fontSize: 15, color: "#6C6C70", textAlign: "center", lineHeight: 22 }}>
-          Supabase credentials are missing from this build.{"\n\n"}
-          Make sure EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY
-          are set in eas.json under the correct build profile, then rebuild.
-        </Text>
-      </View>
-    );
-  }
+  const [fontsLoaded] = useFonts({
+    Manrope_400Regular, Manrope_500Medium, Manrope_600SemiBold, Manrope_700Bold, Manrope_800ExtraBold,
+  });
+  if (!fontsLoaded) return null;
 
   return (
     <AuthProvider>
       <HouseholdProvider>
         <AppProvider>
-          <Stack>
-            <Stack.Screen name="index" options={{ headerShown: false }} />
-            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-            <Stack.Screen name="login" options={{ headerShown: false }} />
-            <Stack.Screen name="household-setup" options={{ headerShown: false }} />
-            <Stack.Screen
-              name="add-expense"
-              options={{
-                title: "Add Expense",
-                headerStyle: { backgroundColor: "#4A90D9" },
-                headerTintColor: "#fff",
-                headerTitleStyle: { fontWeight: "bold" },
-                presentation: "modal",
-              }}
-            />
-            <Stack.Screen
-              name="edit-expense"
-              options={{
-                title: "Edit Expense",
-                headerStyle: { backgroundColor: "#4A90D9" },
-                headerTintColor: "#fff",
-                headerTitleStyle: { fontWeight: "bold" },
-                presentation: "modal",
-              }}
-            />
-            <Stack.Screen
-              name="add-settlement"
-              options={{
-                title: "Record Payment",
-                headerStyle: { backgroundColor: "#2ECC71" },
-                headerTintColor: "#fff",
-                headerTitleStyle: { fontWeight: "bold" },
-                presentation: "modal",
-              }}
-            />
-          </Stack>
-          <SchemaCheck />
-          <AuthGuard />
-          <SyncRunner />
+          <RootStack />
         </AppProvider>
       </HouseholdProvider>
     </AuthProvider>

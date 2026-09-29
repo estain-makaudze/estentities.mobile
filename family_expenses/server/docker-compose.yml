@@ -1,0 +1,40 @@
+# Family Expenses API on the ESTENTITIES server.
+#
+#   cp .env.example .env   # set POSTGRES_PASSWORD (and DATABASE_URL if using an existing Postgres)
+#   docker compose up -d --build
+#
+# To reuse the Postgres that already runs on the box instead of the bundled one:
+# create a database + role (see README), set DATABASE_URL in .env, and run only the
+# api service:  docker compose up -d --build api
+services:
+  api:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: 8787
+    ports:
+      - "127.0.0.1:8787:8787"   # put Caddy/nginx (TLS) in front; don't expose directly
+    depends_on:
+      db:
+        condition: service_healthy
+        required: false
+    mem_limit: 256m
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: family
+      POSTGRES_USER: family
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - family_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U family -d family"]
+      interval: 5s
+      retries: 10
+    mem_limit: 256m
+
+volumes:
+  family_pg:

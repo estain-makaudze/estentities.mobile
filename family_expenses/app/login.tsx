@@ -1,257 +1,107 @@
 import React, { useState } from "react";
-import {
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from "react-native";
-import { useRouter } from "expo-router";
-import { useAuth } from "../context/AuthContext";
+import { Alert, Image, KeyboardAvoidingView, Platform, Pressable, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Button, Card, Field, Screen, T } from "../components/ui";
+import { ApiError, useAuth } from "../context/AuthContext";
+import { getMeta, initDatabase, setMeta } from "../db/database";
+import { apiBaseUrl } from "../services/api";
+import { radius, useTheme } from "../theme";
 
-type Mode = "login" | "register";
-
+/**
+ * Welcome: phone number + name. No password.
+ * If the number already belongs to a family, the server asks for that
+ * family's invite code (so nobody can take over an account by typing a number).
+ */
 export default function LoginScreen() {
-  const { login, register } = useAuth();
-  const router = useRouter();
-
-  const [mode, setMode] = useState<Mode>("login");
+  const { c } = useTheme();
+  const insets = useSafeAreaInsets();
+  const { login } = useAuth();
+  const [phone, setPhone] = useState("");
   const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [code, setCode] = useState("");
+  const [needCode, setNeedCode] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [showServer, setShowServer] = useState(false);
+  const [server, setServer] = useState(() => {
+    initDatabase();
+    return getMeta("apiUrl") ?? "";
+  });
 
-  const handleSubmit = async () => {
-    if (!email.trim() || !password) {
-      Alert.alert("Validation", "Please enter your email and password.");
-      return;
+  const submit = async () => {
+    if (phone.replace(/\D/g, "").length < 7) return Alert.alert("Phone number", "Enter your phone number.");
+    if (!name.trim()) return Alert.alert("Your name", "Enter the name your family will see.");
+    if (needCode && !code.trim()) return Alert.alert("Family code", "Enter your family's invite code.");
+    setMeta("apiUrl", server.trim() || null);
+    if (!apiBaseUrl()) {
+      setShowServer(true);
+      return Alert.alert("Server", "Enter the server address first.");
     }
-    if (mode === "register") {
-      if (!name.trim()) {
-        Alert.alert("Validation", "Please enter your name.");
-        return;
+    setBusy(true);
+    try {
+      await login(phone, name.trim(), needCode ? code.trim() : undefined);
+    } catch (e) {
+      if (e instanceof ApiError && e.code === "INVITE_REQUIRED") {
+        setNeedCode(true);
+        Alert.alert("Welcome back", e.message);
+      } else {
+        Alert.alert("Couldn't sign in", (e as Error).message);
       }
-      if (password.length < 8) {
-        Alert.alert("Validation", "Password must be at least 8 characters.");
-        return;
-      }
-      if (password !== confirmPassword) {
-        Alert.alert("Validation", "Passwords do not match.");
-        return;
-      }
-    }
-
-    setLoading(true);
-    const result =
-      mode === "login"
-        ? await login(email.trim(), password)
-        : await register(name.trim(), email.trim(), password);
-    setLoading(false);
-
-    if (result.error) {
-      Alert.alert("Error", result.error);
-    } else {
-      router.replace("/(tabs)");
+    } finally {
+      setBusy(false);
     }
   };
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 24}
-    >
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* Header */}
-        <View style={styles.header}>
-          <Text style={styles.appIcon}>👨‍👩‍👧‍👦</Text>
-          <Text style={styles.appName}>Family Expenses</Text>
-          <Text style={styles.appTagline}>Track and split expenses together</Text>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      <Screen>
+        <View style={{ paddingTop: insets.top + 48, gap: 10 }}>
+          <Image source={require("../assets/images/icon.png")} style={{ width: 72, height: 72, borderRadius: 20 }} />
+          <T variant="display" style={{ marginTop: 20 }}>Family money,{"\n"}together.</T>
+          <T muted>Track shared expenses, budgets and bills — works offline and syncs when you&apos;re back online.</T>
         </View>
 
-        {/* Mode toggle */}
-        <View style={styles.toggleRow}>
-          <TouchableOpacity
-            style={[styles.toggleBtn, mode === "login" && styles.toggleBtnActive]}
-            onPress={() => setMode("login")}
-          >
-            <Text
-              style={[
-                styles.toggleBtnText,
-                mode === "login" && styles.toggleBtnTextActive,
-              ]}
-            >
-              Sign In
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.toggleBtn, mode === "register" && styles.toggleBtnActive]}
-            onPress={() => setMode("register")}
-          >
-            <Text
-              style={[
-                styles.toggleBtnText,
-                mode === "register" && styles.toggleBtnTextActive,
-              ]}
-            >
-              Create Account
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Form card */}
-        <View style={styles.formCard}>
-          {mode === "register" && (
-            <>
-              <Text style={styles.label}>Your Name</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. Alex"
-                value={name}
-                onChangeText={setName}
-                autoCapitalize="words"
-                returnKeyType="next"
-              />
-            </>
-          )}
-
-          <Text style={styles.label}>Email</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="you@example.com"
-            value={email}
-            onChangeText={setEmail}
-            keyboardType="email-address"
-            autoCapitalize="none"
-            autoCorrect={false}
-            returnKeyType="next"
+        <Card style={{ marginTop: 32 }}>
+          <Field
+            label="Phone number"
+            placeholder="077 123 4567"
+            keyboardType="phone-pad"
+            autoComplete="tel"
+            value={phone}
+            onChangeText={setPhone}
+            style={{ marginBottom: 0 }}
           />
-
-          <Text style={styles.label}>Password</Text>
-          <TextInput
-            style={styles.input}
-            placeholder={mode === "register" ? "At least 8 characters" : "Your password"}
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            returnKeyType={mode === "register" ? "next" : "done"}
-            onSubmitEditing={mode === "login" ? handleSubmit : undefined}
-          />
-
-          {mode === "register" && (
-            <>
-              <Text style={styles.label}>Confirm Password</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Repeat password"
-                value={confirmPassword}
-                onChangeText={setConfirmPassword}
-                secureTextEntry
-                returnKeyType="done"
-                onSubmitEditing={handleSubmit}
-              />
-            </>
+          <T variant="caption" style={{ marginTop: 6 }}>Local numbers get +263 automatically. Use +country code otherwise.</T>
+          <Field label="Your name" placeholder="e.g. Estain" value={name} onChangeText={setName} autoCapitalize="words" />
+          {needCode && (
+            <Field
+              label="Family invite code"
+              placeholder="ABCD2345"
+              autoCapitalize="characters"
+              value={code}
+              onChangeText={setCode}
+            />
           )}
+          <Button title={needCode ? "Sign in" : "Continue"} onPress={submit} loading={busy} style={{ marginTop: 24 }} />
+        </Card>
 
-          <TouchableOpacity
-            style={[styles.submitBtn, loading && styles.submitBtnDisabled]}
-            onPress={handleSubmit}
-            disabled={loading}
-          >
-            <Text style={styles.submitBtnText}>
-              {loading ? "Please wait…" : mode === "login" ? "Sign In" : "Create Account"}
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        <Text style={styles.syncNote}>
-          🔒 Your data is securely stored in the cloud and syncs across devices.
-        </Text>
-      </ScrollView>
+        <Pressable onPress={() => setShowServer((v) => !v)} style={{ alignSelf: "center", marginTop: 20, padding: 8 }}>
+          <T variant="caption">Server settings {showServer ? "▲" : "▼"}</T>
+        </Pressable>
+        {showServer && (
+          <View style={{ backgroundColor: c.card, borderRadius: radius.md, padding: 16 }}>
+            <Field
+              label="Server address"
+              placeholder={process.env.EXPO_PUBLIC_API_URL || "https://family.example.org"}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+              value={server}
+              onChangeText={setServer}
+            />
+            <T variant="caption" style={{ marginTop: 6 }}>Leave blank to use the built-in address.</T>
+          </View>
+        )}
+      </Screen>
     </KeyboardAvoidingView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F2F2F7" },
-  content: { padding: 24, paddingBottom: 48, flexGrow: 1, justifyContent: "center" },
-
-  header: { alignItems: "center", marginBottom: 32 },
-  appIcon: { fontSize: 72, marginBottom: 12 },
-  appName: { fontSize: 28, fontWeight: "800", color: "#1C1C1E", marginBottom: 6 },
-  appTagline: { fontSize: 15, color: "#6C6C70", textAlign: "center" },
-
-  toggleRow: {
-    flexDirection: "row",
-    backgroundColor: "#E5E5EA",
-    borderRadius: 12,
-    padding: 4,
-    marginBottom: 24,
-  },
-  toggleBtn: {
-    flex: 1,
-    paddingVertical: 10,
-    alignItems: "center",
-    borderRadius: 10,
-  },
-  toggleBtnActive: { backgroundColor: "#fff" },
-  toggleBtnText: { fontSize: 15, color: "#6C6C70", fontWeight: "500" },
-  toggleBtnTextActive: { color: "#1C1C1E", fontWeight: "700" },
-
-  formCard: {
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  label: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#6C6C70",
-    marginBottom: 6,
-    marginTop: 12,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  input: {
-    backgroundColor: "#F2F2F7",
-    borderRadius: 10,
-    padding: 14,
-    fontSize: 16,
-    color: "#1C1C1E",
-    borderWidth: 1,
-    borderColor: "#E5E5EA",
-  },
-
-  submitBtn: {
-    backgroundColor: "#4A90D9",
-    borderRadius: 12,
-    padding: 16,
-    alignItems: "center",
-    marginTop: 20,
-  },
-  submitBtnDisabled: { opacity: 0.6 },
-  submitBtnText: { color: "#fff", fontSize: 16, fontWeight: "700" },
-
-  syncNote: {
-    fontSize: 13,
-    color: "#8E8E93",
-    textAlign: "center",
-    lineHeight: 20,
-    paddingHorizontal: 8,
-  },
-});

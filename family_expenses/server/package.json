@@ -1,0 +1,31 @@
+{
+  "name": "family-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Lightweight sync API for the Family Expenses app (Hono + Postgres)",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "migrate": "tsx scripts/migrate.ts",
+    "import:supabase": "tsx scripts/import-supabase.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/api.test.ts test/import.test.ts",
+    "test:client": "TSX_TSCONFIG_PATH=test/tsconfig.client.json tsx --test test/client-sync.test.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "hono": "^4.6.14",
+    "postgres": "^3.4.5",
+    "tsx": "^4.19.2",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
+    "@electric-sql/pglite-socket": "0.2.11",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^22.10.2",
+    "better-sqlite3": "^11.10.0",
+    "typescript": "^5.7.2"
+  }
+}

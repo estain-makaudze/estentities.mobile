@@ -1,9 +1,7 @@
-// Expo SDK 46+ exposes EXPO_PUBLIC_ vars via process.env at build time.
+// EXPO_PUBLIC_ vars are inlined by Metro at build time (set them in eas.json).
 declare namespace NodeJS {
   interface ProcessEnv {
-    EXPO_PUBLIC_SUPABASE_URL: string;
-    EXPO_PUBLIC_SUPABASE_ANON_KEY: string;
+    /** Base URL of the family-api server, e.g. https://family.estentities.org */
+    EXPO_PUBLIC_API_URL?: string;
   }
-  export const SUPABASE_URL: string;
-  export const SUPABASE_ANON_KEY: string;
 }

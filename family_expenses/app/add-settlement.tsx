@@ -1,269 +1,95 @@
-import React, { useState } from "react";
-import {
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import React, { useState } from "react";
+import { Alert, KeyboardAvoidingView, Platform, Pressable, Text, TextInput, View } from "react-native";
+import { DateField } from "../components/DateField";
+import { Avatar, Button, Field, FieldLabel, Header, Screen, T } from "../components/ui";
 import { useApp } from "../context/AppContext";
+import { useAuth } from "../context/AuthContext";
 import { useHousehold } from "../context/HouseholdContext";
+import { fonts, useTheme } from "../theme";
+import type { User } from "../types";
+import { today } from "../utils/dates";
 
+function PersonPicker({ users, value, onChange, me }: { users: User[]; value: string; onChange: (id: string) => void; me: string | null }) {
+  const { c } = useTheme();
+  return (
+    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+      {users.map((u) => (
+        <Pressable
+          key={u.id}
+          onPress={() => onChange(u.id)}
+          style={{
+            flexDirection: "row", alignItems: "center", gap: 8, padding: 4, paddingRight: 14, borderRadius: 999,
+            backgroundColor: value === u.id ? c.dark : c.card, borderWidth: 1, borderColor: value === u.id ? c.dark : c.line,
+          }}
+        >
+          <Avatar name={u.name} color={u.color} size={28} />
+          <Text style={{ fontFamily: fonts.semibold, color: value === u.id ? c.onDark : c.ink }}>{u.id === me ? "You" : u.name}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+/** Record a payment between two members (settling up). */
 export default function AddSettlementScreen() {
-  const { addSettlement } = useApp();
-  const { members: users } = useHousehold();
   const router = useRouter();
-  const params = useLocalSearchParams<{
-    fromUserId?: string;
-    toUserId?: string;
-    suggestedAmount?: string;
-  }>();
-
-  const [fromUserId, setFromUserId] = useState(
-    params.fromUserId ?? users[0]?.id ?? ""
-  );
-  const [toUserId, setToUserId] = useState(
-    params.toUserId ??
-      (users.length > 1 ? users[1].id : users[0]?.id ?? "")
-  );
+  const { c } = useTheme();
+  const params = useLocalSearchParams<{ fromUserId?: string; toUserId?: string; suggestedAmount?: string }>();
+  const { userId } = useAuth();
+  const { members, currency } = useHousehold();
+  const { addSettlement } = useApp();
+  const [from, setFrom] = useState(params.fromUserId ?? userId ?? "");
+  const [to, setTo] = useState(params.toUserId ?? members.find((m) => m.id !== (params.fromUserId ?? userId))?.id ?? "");
   const [amount, setAmount] = useState(params.suggestedAmount ?? "");
+  const [date, setDate] = useState(today());
   const [note, setNote] = useState("");
 
-  const getUserColor = (id: string) =>
-    users.find((u) => u.id === id)?.color ?? "#888";
-
-  const handleSubmit = () => {
-    const parsedAmount = parseFloat(amount);
-    if (!fromUserId || !toUserId) {
-      Alert.alert("Validation", "Please select both users.");
-      return;
-    }
-    if (fromUserId === toUserId) {
-      Alert.alert("Validation", "The payer and receiver must be different people.");
-      return;
-    }
-    if (isNaN(parsedAmount) || parsedAmount <= 0) {
-      Alert.alert("Validation", "Please enter a valid amount greater than 0.");
-      return;
-    }
-
-    addSettlement({
-      fromUserId,
-      toUserId,
-      amount: parsedAmount,
-      date: new Date().toISOString(),
-      note: note.trim() || undefined,
-    });
-
+  const submit = () => {
+    const value = parseFloat(amount.replace(/,/g, ""));
+    if (isNaN(value) || value <= 0) return Alert.alert("Amount", "Enter an amount greater than 0.");
+    if (!from || !to || from === to) return Alert.alert("Payment", "Choose two different people.");
+    addSettlement({ fromUserId: from, toUserId: to, amount: Math.round(value * 100) / 100, date, note: note.trim() || null });
     router.back();
   };
 
-  if (users.length < 2) {
+  if (members.length < 2) {
     return (
-      <View style={styles.center}>
-        <Text style={styles.noUsersText}>
-          You need at least two household members to record a settlement.
-        </Text>
-        <TouchableOpacity
-          style={styles.goUsersBtn}
-          onPress={() => router.push("/(tabs)/household")}
-        >
-          <Text style={styles.goUsersBtnText}>View Household</Text>
-        </TouchableOpacity>
-      </View>
+      <Screen>
+        <Header title="Settle up" />
+        <T muted>Invite another family member first — share the code from the Family tab.</T>
+      </Screen>
     );
   }
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 24}
-    >
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
-      >
-        <Text style={styles.description}>
-          Record a partial or full payment from one household member to another.
-          This will reduce the outstanding balance between them.
-        </Text>
-
-        <Text style={styles.sectionTitle}>Who Paid</Text>
-        <View style={styles.pillRow}>
-          {users.map((u) => (
-            <TouchableOpacity
-              key={u.id}
-              style={[
-                styles.pill,
-                fromUserId === u.id && { backgroundColor: u.color },
-              ]}
-              onPress={() => setFromUserId(u.id)}
-            >
-              <Text
-                style={[
-                  styles.pillText,
-                  fromUserId === u.id && styles.pillTextActive,
-                ]}
-              >
-                {u.name}
-              </Text>
-            </TouchableOpacity>
-          ))}
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      <Screen>
+        <Header title="Settle up" />
+        <View style={{ alignItems: "center", paddingVertical: 12 }}>
+          <T variant="caption">Amount ({currency})</T>
+          <TextInput
+            value={amount}
+            onChangeText={setAmount}
+            placeholder="0.00"
+            placeholderTextColor={c.muted}
+            keyboardType="decimal-pad"
+            style={{ fontFamily: fonts.extrabold, fontSize: 44, color: c.ink, textAlign: "center", minWidth: 160 }}
+          />
         </View>
-
-        <Text style={styles.sectionTitle}>Who Received</Text>
-        <View style={styles.pillRow}>
-          {users.map((u) => (
-            <TouchableOpacity
-              key={u.id}
-              style={[
-                styles.pill,
-                toUserId === u.id && { backgroundColor: u.color },
-              ]}
-              onPress={() => setToUserId(u.id)}
-            >
-              <Text
-                style={[
-                  styles.pillText,
-                  toUserId === u.id && styles.pillTextActive,
-                ]}
-              >
-                {u.name}
-              </Text>
-            </TouchableOpacity>
-          ))}
+        <FieldLabel>Who paid</FieldLabel>
+        <PersonPicker users={members} value={from} onChange={setFrom} me={userId} />
+        <View style={{ alignItems: "center", marginTop: 12 }}>
+          <Ionicons name="arrow-down" size={22} color={c.sub} />
         </View>
-
-        {fromUserId && toUserId && fromUserId !== toUserId && (
-          <View style={styles.previewRow}>
-            <View style={[styles.previewAvatar, { backgroundColor: getUserColor(fromUserId) }]}>
-              <Text style={styles.avatarText}>
-                {users.find((u) => u.id === fromUserId)?.name[0].toUpperCase()}
-              </Text>
-            </View>
-            <Text style={styles.previewArrow}>→</Text>
-            <View style={[styles.previewAvatar, { backgroundColor: getUserColor(toUserId) }]}>
-              <Text style={styles.avatarText}>
-                {users.find((u) => u.id === toUserId)?.name[0].toUpperCase()}
-              </Text>
-            </View>
-          </View>
-        )}
-
-        <Text style={styles.sectionTitle}>Amount ($)</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="0.00"
-          value={amount}
-          onChangeText={setAmount}
-          keyboardType="decimal-pad"
-        />
-
-        <Text style={styles.sectionTitle}>Note (optional)</Text>
-        <TextInput
-          style={[styles.input, styles.noteInput]}
-          placeholder="e.g. Venmo transfer, cash…"
-          value={note}
-          onChangeText={setNote}
-          multiline
-        />
-
-        <TouchableOpacity style={styles.submitBtn} onPress={handleSubmit}>
-          <Text style={styles.submitBtnText}>Record Payment</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.cancelBtn}
-          onPress={() => router.back()}
-        >
-          <Text style={styles.cancelBtnText}>Cancel</Text>
-        </TouchableOpacity>
-      </ScrollView>
+        <FieldLabel>Who received</FieldLabel>
+        <PersonPicker users={members.filter((m) => m.id !== from)} value={to} onChange={setTo} me={userId} />
+        <FieldLabel>Date</FieldLabel>
+        <DateField value={date} onChange={setDate} />
+        <Field label="Note (optional)" value={note} onChangeText={setNote} placeholder="e.g. EcoCash transfer" />
+        <Button title="Record payment" onPress={submit} style={{ marginTop: 28 }} />
+      </Screen>
     </KeyboardAvoidingView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F2F2F7" },
-  content: { padding: 16, paddingBottom: 40 },
-  center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
-  noUsersText: { fontSize: 16, color: "#6C6C70", textAlign: "center", marginBottom: 16 },
-  goUsersBtn: { backgroundColor: "#4A90D9", borderRadius: 12, padding: 14, paddingHorizontal: 28 },
-  goUsersBtnText: { color: "#fff", fontWeight: "600", fontSize: 15 },
-
-  description: {
-    fontSize: 14,
-    color: "#6C6C70",
-    lineHeight: 20,
-    backgroundColor: "#EAF4FF",
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 8,
-  },
-
-  sectionTitle: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#6C6C70",
-    marginTop: 16,
-    marginBottom: 6,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-
-  pillRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  pill: {
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    backgroundColor: "#E5E5EA",
-  },
-  pillText: { fontSize: 14, color: "#3A3A3C" },
-  pillTextActive: { color: "#fff", fontWeight: "600" },
-
-  previewRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 12,
-    gap: 12,
-  },
-  previewAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  avatarText: { color: "#fff", fontWeight: "700", fontSize: 16 },
-  previewArrow: { fontSize: 28, color: "#2ECC71" },
-
-  input: {
-    backgroundColor: "#fff",
-    borderRadius: 10,
-    padding: 12,
-    fontSize: 16,
-    color: "#1C1C1E",
-    borderWidth: 1,
-    borderColor: "#E5E5EA",
-  },
-  noteInput: { minHeight: 64, textAlignVertical: "top" },
-
-  submitBtn: {
-    backgroundColor: "#2ECC71",
-    borderRadius: 14,
-    padding: 16,
-    alignItems: "center",
-    marginTop: 24,
-  },
-  submitBtnText: { color: "#fff", fontSize: 16, fontWeight: "700" },
-  cancelBtn: { borderRadius: 14, padding: 14, alignItems: "center", marginTop: 10 },
-  cancelBtnText: { color: "#8E8E93", fontSize: 15 },
-});
