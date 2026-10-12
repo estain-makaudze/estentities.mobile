@@ -95,6 +95,7 @@ Import `callKw` from `./odooClient`, follow the typed pattern in `services/odooA
 - Server conflict rule: last-write-wins on `clientUpdatedAt`; deletes (tombstones) always win.
 - `splits: SplitEntry[] | null` — `null` means the payer owns 100% (no balance impact). Always check for null before computing shares.
 - Login is phone + name (no password). An existing phone in a family must also give that family's invite code.
+- **Keep React Compiler off** (`app.json` → `experiments.reactCompiler: false`). Screens re-run SQLite queries via `useMemo(..., [..., version])` from `useDataVersion()`; the compiler drops that `version` dependency and screens stop refreshing after writes. CI fails the APK build if it is re-enabled.
 
 ### loan_management — read cache + manual sync
 - `cacheStore.tsx` holds a read-only snapshot (invoices, schedules, due lines) refreshed every 5 minutes or on demand via `refreshAll()`.
