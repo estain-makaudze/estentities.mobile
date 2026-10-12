@@ -93,10 +93,10 @@ export function setMeta(key: string, value: string | null) {
   else db.runSync("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", key, value);
 }
 
-/** Wipe everything (logout) — except the server address the user typed in. */
+/** Wipe everything (logout) — except the server address and appearance choice. */
 export function resetDatabase() {
   db.withTransactionSync(() => {
-    db.runSync("DELETE FROM meta WHERE key != 'apiUrl'");
+    db.runSync("DELETE FROM meta WHERE key NOT IN ('apiUrl', 'theme')");
     for (const t of ["users", "households", "members", "categories", "expenses",
                      "settlements", "budgets", "recurring", "outbox"]) {
       db.runSync(`DELETE FROM ${t}`);

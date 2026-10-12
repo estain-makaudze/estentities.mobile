@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, ScrollView, Share, Switch, View } from "react-native";
-import { Avatar, Button, Card, Chip, Header, Money, Row, Screen, SectionHeader, T } from "../../components/ui";
+import { Avatar, Button, Card, Chip, Header, Money, Row, Screen, SectionHeader, Segmented, T } from "../../components/ui";
 import { useAuth } from "../../context/AuthContext";
 import { useHousehold } from "../../context/HouseholdContext";
 import { useDataVersion } from "../../db/events";
@@ -10,7 +10,7 @@ import { allExpenses, allSettlements } from "../../db/queries";
 import { useSyncStatus } from "../../hooks/useSync";
 import { api } from "../../services/api";
 import { syncNow } from "../../services/syncEngine";
-import { radius, useTheme } from "../../theme";
+import { radius, setThemePreference, useTheme, useThemePreference, type ThemePref } from "../../theme";
 import { computeNetBalances } from "../../utils/balance";
 import { CURRENCIES } from "../../utils/format";
 import { REMINDER_TIMES, getReminderSettings, scheduleDailyReminders, setReminderSettings } from "../../utils/notify";
@@ -40,6 +40,7 @@ export default function FamilyScreen() {
   const hh = household?.id ?? "";
   const [devices, setDevices] = useState<Device[] | null>(null);
   const [showCurrency, setShowCurrency] = useState(false);
+  const themePref = useThemePreference();
   const [reminder, setReminder] = useState(getReminderSettings);
   const updateReminder = (patch: { enabled?: boolean; time?: string }) => {
     setReminderSettings(patch);
@@ -79,7 +80,7 @@ export default function FamilyScreen() {
 
   return (
     <Screen bottomInset={110}>
-      <Header title="Family" back={false} />
+      <Header title="Family" />
 
       {/* Invite */}
       <Card style={{ backgroundColor: c.primary }}>
@@ -114,7 +115,7 @@ export default function FamilyScreen() {
       </Card>
 
       {/* Members */}
-      <SectionHeader title={`Members · ${members.length}`} action="Balances" onAction={() => router.push("/(tabs)/settlements")} />
+      <SectionHeader title={`Members · ${members.length}`} action="Balance" onAction={() => router.push("/(tabs)/balance")} />
       <Card style={{ paddingVertical: 6 }}>
         {members.map((m) => {
           const b = balances[m.id] ?? 0;
@@ -187,6 +188,17 @@ export default function FamilyScreen() {
             </View>
           </View>
         )}
+      </Card>
+
+      {/* Appearance */}
+      <SectionHeader title="Appearance" />
+      <Card style={{ gap: 10 }}>
+        <Segmented<ThemePref>
+          value={themePref}
+          onChange={setThemePreference}
+          options={[{ value: "light", label: "☀️ Light" }, { value: "dark", label: "🌙 Dark" }, { value: "system", label: "Auto" }]}
+        />
+        <T variant="caption">Auto follows your phone&apos;s setting. Saved on this phone only.</T>
       </Card>
 
       {/* Reminders */}

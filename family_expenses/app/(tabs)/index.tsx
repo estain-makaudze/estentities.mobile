@@ -48,8 +48,10 @@ export default function HomeScreen() {
           <T variant="h1" numberOfLines={1}>{firstName}</T>
         </View>
         <Pressable hitSlop={10} onPress={() => router.push("/(tabs)/household")}>
-          <View style={{ backgroundColor: c.card, borderRadius: radius.pill, paddingHorizontal: 12, paddingVertical: 6 }}>
-            <T variant="caption" color={c.ink} numberOfLines={1} style={{ maxWidth: 130 }}>{household?.name}</T>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: c.card, borderRadius: radius.pill, paddingHorizontal: 12, paddingVertical: 8 }}>
+            <Ionicons name="people" size={16} color={c.primary} />
+            <T variant="caption" color={c.ink} numberOfLines={1} style={{ maxWidth: 120 }}>{household?.name}</T>
+            <Ionicons name="chevron-forward" size={14} color={c.sub} />
           </View>
         </Pressable>
       </View>
@@ -80,15 +82,15 @@ export default function HomeScreen() {
 
       {/* Quick actions */}
       <View style={{ flexDirection: "row", marginTop: 28 }}>
-        <QuickAction icon="add-circle-outline" label="Expense" onPress={() => router.push("/add-expense")} />
-        <QuickAction icon="swap-horizontal" label="Settle up" onPress={() => router.push("/add-settlement")} />
-        <QuickAction icon="repeat" label="Bills" onPress={() => router.push("/recurring")} />
-        <QuickAction icon="grid-outline" label="More" onPress={() => router.push("/(tabs)/settings")} />
+        <QuickAction icon="receipt-outline" label="Transactions" onPress={() => router.push("/(tabs)/expenses")} />
+        <QuickAction icon="swap-horizontal" label="Payments" onPress={() => router.push("/(tabs)/settlements")} />
+        <QuickAction icon="scale-outline" label="Balance" onPress={() => router.push("/(tabs)/balance")} />
+        <QuickAction icon="wallet-outline" label="Budgets" onPress={() => router.push("/(tabs)/budgets")} />
       </View>
 
       {/* My balance */}
       {members.length > 1 && (
-        <Pressable onPress={() => router.push("/(tabs)/settlements")}>
+        <Pressable onPress={() => router.push("/(tabs)/balance")}>
           <Card style={{ marginTop: 24, flexDirection: "row", alignItems: "center", gap: 12 }}>
             <View
               style={{
@@ -106,7 +108,7 @@ export default function HomeScreen() {
               <T variant="caption">{Math.abs(bal) < 0.01 ? "All settled" : bal > 0 ? "You are owed" : "You owe"}</T>
               <Money amount={Math.abs(bal)} currency={currency} variant="h2" />
             </View>
-            <T variant="caption" color={c.primary}>Balances ›</T>
+            <T variant="caption" color={c.primary}>See ledger ›</T>
           </Card>
         </Pressable>
       )}

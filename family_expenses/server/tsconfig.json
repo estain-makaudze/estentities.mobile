@@ -17,7 +17,8 @@
     "test"
   ],
   "exclude": [
+    "test/client-mocks",
     "test/client-sync.test.ts",
-    "test/client-mocks"
+    "test/ledger.test.ts"
   ]
 }

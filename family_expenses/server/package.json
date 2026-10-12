@@ -11,7 +11,7 @@
     "import:supabase": "tsx scripts/import-supabase.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/api.test.ts test/import.test.ts",
-    "test:client": "TSX_TSCONFIG_PATH=test/tsconfig.client.json tsx --test test/client-sync.test.ts"
+    "test:client": "TSX_TSCONFIG_PATH=test/tsconfig.client.json tsx --test test/client-sync.test.ts test/ledger.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",

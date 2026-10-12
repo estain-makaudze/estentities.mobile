@@ -42,7 +42,7 @@ export default function BudgetsScreen() {
 
   return (
     <Screen bottomInset={110}>
-      <Header title="Budgets" back={false} />
+      <Header title="Budgets" />
 
       <Card style={{ alignItems: "center", paddingVertical: 24 }}>
         <T variant="caption">{monthLong(month)}</T>
@@ -139,6 +139,16 @@ export default function BudgetsScreen() {
           </Pressable>
         ))}
       </Card>
+      <Pressable onPress={() => router.push("/recurring")} style={{ marginTop: 16 }}>
+        <Card style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+          <IconTile icon="repeat" color={c.primary} size={40} />
+          <View style={{ flex: 1 }}>
+            <T variant="bodyStrong">Recurring bills</T>
+            <T variant="caption">Rent, fees and subscriptions added automatically</T>
+          </View>
+          <T variant="caption" color={c.primary}>Open ›</T>
+        </Card>
+      </Pressable>
       <T variant="caption" style={{ textAlign: "center", marginTop: 16 }}>
         You&apos;ll get a notification at 80% and 100% of each budget.
       </T>

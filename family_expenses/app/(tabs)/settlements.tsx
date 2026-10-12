@@ -1,19 +1,20 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import React, { useMemo } from "react";
-import { Alert, Pressable, View } from "react-native";
-import { Avatar, Button, Card, EmptyState, Header, Money, Row, Screen, SectionHeader, T } from "../../components/ui";
+import React, { useMemo, useState } from "react";
+import { Alert, Pressable, TextInput, View } from "react-native";
+import { Avatar, Button, Card, EmptyState, Header, IconTile, Money, Row, Screen, SectionHeader, T } from "../../components/ui";
 import { useApp } from "../../context/AppContext";
 import { useAuth } from "../../context/AuthContext";
 import { useHousehold } from "../../context/HouseholdContext";
 import { useDataVersion } from "../../db/events";
 import { allExpenses, allSettlements } from "../../db/queries";
-import { useTheme } from "../../theme";
+import { fonts, radius, useTheme } from "../../theme";
 import { computeDebtSummary, computeNetBalances } from "../../utils/balance";
-import { friendlyDate } from "../../utils/dates";
+import { friendlyDate, monthKey, monthLong, today } from "../../utils/dates";
+import { formatMoney } from "../../utils/format";
 
-/** Balances: who owes whom (minimised), settle up, payment history. */
-export default function BalancesScreen() {
+/** Payments (settle-ups): suggested payments, record one, and the full searchable history. */
+export default function PaymentsScreen() {
   const router = useRouter();
   const { c } = useTheme();
   const { userId } = useAuth();
@@ -21,44 +22,64 @@ export default function BalancesScreen() {
   const { deleteSettlement } = useApp();
   const version = useDataVersion();
   const hh = household?.id ?? "";
+  const [search, setSearch] = useState("");
 
   const d = useMemo(() => {
     void version;
     const settlements = allSettlements(hh);
     const balances = computeNetBalances(allExpenses(hh), settlements, members.map((m) => m.id));
-    return { balances, debts: computeDebtSummary(balances), settlements };
+    const month = monthKey(today());
+    return {
+      debts: computeDebtSummary(balances),
+      settlements,
+      total: settlements.reduce((a, s) => a + s.amount, 0),
+      thisMonth: settlements.filter((s) => monthKey(s.date) === month).reduce((a, s) => a + s.amount, 0),
+    };
   }, [hh, members, version]);
+
+  const list = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return d.settlements;
+    const digits = q.replace(/[^0-9.]/g, "");
+    return d.settlements.filter(
+      (s) =>
+        (!!digits && s.amount.toFixed(2).includes(digits)) ||
+        [s.note, userName(s.fromUserId), userName(s.toUserId), s.date].some((h) => h?.toLowerCase().includes(q))
+    );
+  }, [d.settlements, search, userName]);
+
+  let lastMonth = "";
 
   return (
     <Screen bottomInset={110}>
-      <Header title="Balances" />
+      <Header
+        title="Payments"
+        right={
+          <Pressable hitSlop={10} onPress={() => router.push("/add-settlement")}>
+            <Ionicons name="add-circle" size={28} color={c.primary} />
+          </Pressable>
+        }
+      />
 
-      <Card style={{ paddingVertical: 6 }}>
-        {members.map((m) => {
-          const b = d.balances[m.id] ?? 0;
-          return (
-            <Row key={m.id} style={{ paddingVertical: 10 }}>
-              <Avatar name={m.name} color={m.color} size={38} />
-              <T variant="bodyStrong" style={{ flex: 1 }}>{userName(m.id)}</T>
-              <View style={{ alignItems: "flex-end" }}>
-                {Math.abs(b) < 0.01 ? (
-                  <T variant="caption">settled up</T>
-                ) : (
-                  <>
-                    <Money amount={Math.abs(b)} currency={currency} color={b > 0 ? c.success : c.danger} />
-                    <T variant="caption">{b > 0 ? "is owed" : "owes"}</T>
-                  </>
-                )}
-              </View>
-            </Row>
-          );
-        })}
+      <Card style={{ flexDirection: "row" }}>
+        <View style={{ flex: 1 }}>
+          <T variant="caption">Paid back this month</T>
+          <Money amount={d.thisMonth} currency={currency} variant="h2" />
+        </View>
+        <View style={{ flex: 1, alignItems: "flex-end" }}>
+          <T variant="caption">All time · {d.settlements.length} payments</T>
+          <Money amount={d.total} currency={currency} variant="h2" />
+        </View>
       </Card>
 
-      <SectionHeader title="Settle up" />
+      {/* Suggested settle-ups */}
+      <SectionHeader title="Settle up" action="Ledger" onAction={() => router.push("/(tabs)/balance")} />
       {d.debts.length === 0 ? (
         <Card>
-          <EmptyState icon="checkmark-done" title="Everyone is settled up 🎉" body="Shared expenses will show here when someone owes money." />
+          <Row>
+            <IconTile icon="checkmark-done" color={c.success} size={40} />
+            <T variant="bodyStrong" style={{ flex: 1 }}>Everyone is settled up 🎉</T>
+          </Row>
         </Card>
       ) : (
         <View style={{ gap: 10 }}>
@@ -91,33 +112,57 @@ export default function BalancesScreen() {
         </View>
       )}
 
-      <SectionHeader title="Payment history" action="Add" onAction={() => router.push("/add-settlement")} />
-      <Card style={{ paddingVertical: 6 }}>
-        {d.settlements.length === 0 ? (
-          <T variant="caption" style={{ padding: 12, textAlign: "center" }}>No payments recorded yet.</T>
-        ) : (
-          d.settlements.map((s) => (
-            <Row key={s.id} style={{ paddingVertical: 10 }}>
-              <View style={{ flex: 1 }}>
-                <T variant="bodyStrong">{userName(s.fromUserId)} → {userName(s.toUserId)}</T>
-                <T variant="caption">{friendlyDate(s.date)}{s.note ? ` · ${s.note}` : ""}</T>
+      {/* History */}
+      <SectionHeader title="Payment history" />
+      <View
+        style={{ flexDirection: "row", alignItems: "center", backgroundColor: c.card, borderRadius: radius.md,
+                 paddingHorizontal: 14, gap: 8, borderWidth: 1, borderColor: c.line, marginBottom: 8 }}
+      >
+        <Ionicons name="search" size={18} color={c.sub} />
+        <TextInput
+          placeholder="Search person, note or amount"
+          placeholderTextColor={c.sub}
+          value={search}
+          onChangeText={setSearch}
+          style={{ flex: 1, paddingVertical: 12, fontFamily: fonts.medium, fontSize: 15, color: c.ink }}
+        />
+      </View>
+
+      {list.length === 0 ? (
+        <EmptyState icon="swap-horizontal" title={search ? "No matching payments" : "No payments yet"} />
+      ) : (
+        list.map((s) => {
+          const m = monthKey(s.date);
+          const header = m !== lastMonth ? monthLong(m) : null;
+          lastMonth = m;
+          return (
+            <View key={s.id}>
+              {header && <T variant="label" muted style={{ marginTop: 12, marginBottom: 6 }}>{header}</T>}
+              <View style={{ backgroundColor: c.card, borderRadius: radius.md, paddingHorizontal: 12, marginBottom: 6 }}>
+                <Row style={{ paddingVertical: 12 }}>
+                  <IconTile icon="swap-horizontal" color={c.success} size={40} />
+                  <View style={{ flex: 1 }}>
+                    <T variant="bodyStrong" numberOfLines={1}>{userName(s.fromUserId)} → {userName(s.toUserId)}</T>
+                    <T variant="caption" numberOfLines={1}>{friendlyDate(s.date)}{s.note ? ` · ${s.note}` : ""}</T>
+                  </View>
+                  <Money amount={s.amount} currency={currency} />
+                  <Pressable
+                    hitSlop={10}
+                    onPress={() =>
+                      Alert.alert("Delete payment?", `${formatMoney(s.amount, currency)} from ${userName(s.fromUserId)} — balances will be recalculated.`, [
+                        { text: "Cancel", style: "cancel" },
+                        { text: "Delete", style: "destructive", onPress: () => deleteSettlement(s.id) },
+                      ])
+                    }
+                  >
+                    <Ionicons name="trash-outline" size={18} color={c.sub} />
+                  </Pressable>
+                </Row>
               </View>
-              <Money amount={s.amount} currency={currency} />
-              <Pressable
-                hitSlop={10}
-                onPress={() =>
-                  Alert.alert("Delete payment?", "Balances will be recalculated.", [
-                    { text: "Cancel", style: "cancel" },
-                    { text: "Delete", style: "destructive", onPress: () => deleteSettlement(s.id) },
-                  ])
-                }
-              >
-                <Ionicons name="trash-outline" size={18} color={c.sub} />
-              </Pressable>
-            </Row>
-          ))
-        )}
-      </Card>
+            </View>
+          );
+        })
+      )}
     </Screen>
   );
 }

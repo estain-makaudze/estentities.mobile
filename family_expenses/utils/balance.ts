@@ -100,3 +100,78 @@ export function totalOwedByUser(expenses: Expense[], userId: string): number {
   }
   return total;
 }
+
+// ── Ledger: how every expense and payment moves one member's balance ─────────
+
+export interface LedgerRow {
+  id: string;
+  kind: "expense" | "payment";
+  date: string;
+  description: string;
+  /** who paid (expense) / who sent the money (payment) */
+  fromUserId: string;
+  /** payment receiver; null for expenses */
+  toUserId: string | null;
+  amount: number;
+  /** this member's share of an expense (0 for payments / unshared) */
+  share: number;
+  /** change to the member's balance: + = others owe them more, − = they owe more */
+  effect: number;
+  /** member's balance after this row (ends at computeNetBalances()[userId]) */
+  running: number;
+  shared: boolean;
+}
+
+/**
+ * Chronological ledger from one member's point of view. Expenses they paid for
+ * others push their balance up; their share of others' expenses pushes it
+ * down; payments they send (or receive) cancel debt out.
+ */
+export function computeLedger(
+  expenses: Expense[],
+  settlements: Settlement[],
+  userId: string,
+  opts: { includeUnshared?: boolean } = {}
+): LedgerRow[] {
+  type Item = { date: string; order: number; row: Omit<LedgerRow, "running"> };
+  const items: Item[] = [];
+  let order = 0;
+  for (const e of expenses) {
+    const shared = !!e.splits && e.splits.length > 0;
+    const share = shared ? ((e.splits!.find((s) => s.userId === userId)?.percentage ?? 0) * e.amount) / 100 : 0;
+    const effect = !shared ? 0 : (e.paidBy === userId ? e.amount : 0) - share;
+    const involved = e.paidBy === userId || share > 0;
+    if (!involved || (!shared && !opts.includeUnshared)) continue;
+    items.push({
+      date: e.date,
+      order: order++,
+      row: {
+        id: e.id, kind: "expense", date: e.date, description: e.description, fromUserId: e.paidBy,
+        toUserId: null, amount: e.amount, share, effect, shared,
+      },
+    });
+  }
+  for (const s of settlements) {
+    if (s.fromUserId !== userId && s.toUserId !== userId) continue;
+    items.push({
+      date: s.date,
+      order: order++,
+      row: {
+        id: s.id, kind: "payment", date: s.date, description: s.note || "Payment", fromUserId: s.fromUserId,
+        toUserId: s.toUserId, amount: s.amount, share: 0, shared: true,
+        effect: s.fromUserId === userId ? s.amount : -s.amount,
+      },
+    });
+  }
+  // Oldest first; on the same day expenses come before payments that settle them.
+  items.sort((a, b) =>
+    a.date !== b.date ? a.date.localeCompare(b.date)
+      : a.row.kind !== b.row.kind ? (a.row.kind === "expense" ? -1 : 1)
+      : a.order - b.order
+  );
+  let running = 0;
+  return items.map(({ row }) => {
+    running += row.effect;
+    return { ...row, running: Math.round(running * 100) / 100 };
+  });
+}

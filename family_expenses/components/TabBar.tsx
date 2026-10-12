@@ -3,19 +3,19 @@ import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import React from "react";
-import { Pressable, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { cardShadow, useTheme } from "../theme";
+import { cardShadow, fonts, useTheme } from "../theme";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
-const TABS: Record<string, { on: IconName; off: IconName }> = {
-  index: { on: "home", off: "home-outline" },
-  stats: { on: "pie-chart", off: "pie-chart-outline" },
-  budgets: { on: "wallet", off: "wallet-outline" },
-  household: { on: "people", off: "people-outline" },
+const TABS: Record<string, { on: IconName; off: IconName; label: string }> = {
+  index: { on: "home", off: "home-outline", label: "Home" },
+  expenses: { on: "receipt", off: "receipt-outline", label: "History" },
+  balance: { on: "scale", off: "scale-outline", label: "Balance" },
+  stats: { on: "pie-chart", off: "pie-chart-outline", label: "Stats" },
 };
-const ORDER = ["index", "stats", "+", "budgets", "household"];
+const ORDER = ["index", "expenses", "+", "balance", "stats"];
 
 /** Floating white pill tab bar with a dark centre "+" button (as in the mock). */
 export function TabBar({ state, navigation }: BottomTabBarProps) {
@@ -67,10 +67,12 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
                 const event = navigation.emit({ type: "tabPress", target: route.key, canPreventDefault: true });
                 if (!focused && !event.defaultPrevented) navigation.navigate(route.name);
               }}
-              style={{ width: 48, height: 48, alignItems: "center", justifyContent: "center" }}
+              style={{ width: 56, height: 52, alignItems: "center", justifyContent: "center" }}
             >
-              <Ionicons name={focused ? TABS[name].on : TABS[name].off} size={24} color={focused ? c.ink : c.muted} />
-              {focused && <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: c.primary, marginTop: 4 }} />}
+              <Ionicons name={focused ? TABS[name].on : TABS[name].off} size={22} color={focused ? c.primary : c.sub} />
+              <Text style={{ fontFamily: focused ? fonts.bold : fonts.medium, fontSize: 10.5, marginTop: 2, color: focused ? c.primary : c.sub }}>
+                {TABS[name].label}
+              </Text>
             </Pressable>
           );
         })}
